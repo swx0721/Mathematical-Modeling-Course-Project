@@ -1,4 +1,6 @@
 import numpy as np
+import os
+import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 from scipy.optimize import least_squares
 
@@ -182,6 +184,22 @@ def get_outputs(sol, p=None):
     }
 
 
+def plot_outputs(out, save_path):
+    plt.figure(figsize=(10, 6))
+    plt.plot(out["t"], out["I_total"], label="Infectious (I)", linewidth=2.0)
+    plt.plot(out["t"], out["new_reported"], label="New reported", linewidth=2.0)
+    plt.plot(out["t"], out["Q_total"], label="Isolated (Q)", linewidth=1.8)
+    plt.plot(out["t"], out["R_total"], label="Recovered (R)", linewidth=1.8)
+    plt.xlabel("Day")
+    plt.ylabel("Population")
+    plt.title("SEVIQR Seasonal Simulation Curves")
+    plt.grid(alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=200)
+    plt.close()
+
+
 # =========================
 # 9. 参数拟合骨架
 # 这里用每日新增病例 obs_cases 做拟合
@@ -251,6 +269,12 @@ ub = np.array([0.20, 1 / 0.5, 1 / 1.0])
 if __name__ == "__main__":
     sol = simulate()
     out = get_outputs(sol)
+
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    fig_path = os.path.join(current_dir, "seviqr_curves.png")
+    plot_outputs(out, fig_path)
+
     print("Peak infected:", out["peak_I"])
     print("Peak day:", out["peak_day"])
     print("Final attack rate:", out["final_attack_rate"])
+    print("Curve saved to:", fig_path)
