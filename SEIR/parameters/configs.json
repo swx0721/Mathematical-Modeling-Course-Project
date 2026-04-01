@@ -1,0 +1,183 @@
+{
+    "description": "SEIR 模型统一参数配置文件",
+    "model_parameters": {
+        "description": "生物学与传播参数",
+        "sigma": {
+            "value": 0.6667,
+            "description": "潜伏期倒数 (1/潜伏期天数)",
+            "latency_days": 1.5,
+            "source": "literature",
+            "unit": "day^-1"
+        },
+        "gamma": {
+            "value": 0.25,
+            "description": "恢复率 (1/感染期天数)",
+            "infectious_days": 4.0,
+            "source": "literature",
+            "unit": "day^-1"
+        },
+        "omega": {
+            "value": 0.01,
+            "description": "免疫衰减率 (R->S)",
+            "source": "fitted",
+            "unit": "day^-1"
+        }
+    },
+    "population": {
+        "description": "人口相关参数",
+        "N": {
+            "value": 30000,
+            "description": "总人口规模（上海校园假设）",
+            "source": "domain_knowledge",
+            "note": "可根据实际校园规模调整"
+        },
+        "initial_conditions": {
+            "I0_ratio": "inferred_from_data",
+            "E0_multiplier": 1.5,
+            "description": "E0 = E0_multiplier * I0，R0 初始为 0"
+        }
+    },
+    "optimization": {
+        "description": "参数拟合范围与初值",
+        "beta0": {
+            "initial": 0.35,
+            "bounds": [
+                0.01,
+                3.0
+            ],
+            "description": "基础传播率",
+            "source": "fitted"
+        },
+        "a": {
+            "initial": 0.20,
+            "bounds": [
+                0.0,
+                1.0
+            ],
+            "description": "季节性余弦项振幅",
+            "source": "fitted"
+        },
+        "phi": {
+            "initial": 0.0,
+            "bounds": [
+                -6.28,
+                6.28
+            ],
+            "description": "季节性余弦项相位偏移（弧度）",
+            "source": "fitted"
+        },
+        "k": {
+            "initial": 8.0,
+            "bounds": [
+                0.1,
+                40.0
+            ],
+            "description": "观测方程缩放系数（影响 ILI% 峰值）",
+            "source": "fitted"
+        },
+        "p": {
+            "initial": 0.7,
+            "bounds": [
+                0.3,
+                1.5
+            ],
+            "description": "峰值响应指数（非线性感染映射）",
+            "source": "fitted"
+        },
+        "w_h3": {
+            "initial": 2.0,
+            "bounds": [
+                0.0,
+                12.0
+            ],
+            "description": "H3N2 阳性率对传染率的影响权重",
+            "source": "fitted"
+        },
+        "w_season": {
+            "initial": 0.8,
+            "bounds": [
+                -2.0,
+                2.0
+            ],
+            "description": "历史季节性基准的权重",
+            "source": "fitted"
+        },
+        "omega": {
+            "initial": 0.01,
+            "bounds": [
+                0.0,
+                0.2
+            ],
+            "description": "免疫衰减率拟合初值与边界",
+            "source": "fitted"
+        },
+        "loss_function": "soft_l1",
+        "optimizer": "least_squares"
+    },
+    "data_processing": {
+        "description": "数据预处理参数",
+        "target_col": "ili_pct",
+        "value_min": 0,
+        "value_max": 100,
+        "percentile_baseline": 20,
+        "note": "用训练集 20 分位数作为背景基线",
+        "h3n2_missing_value": 0.0,
+        "ili_pct_scale": 100,
+        "note_ili_scale": "原始数据 ILI% 需除以 100 转化为小数"
+    },
+    "file_paths": {
+        "description": "数据文件相对路径（相对于 SEIR/ 目录）",
+        "data_dir": "../data",
+        "china_flu_weekly": "../data/china_flu_weekly.csv",
+        "validation_set": "../data/validation_set_2023_2024.csv",
+        "realistic_data": "../data/china_flu_realistic_final.csv",
+        "output_dir": "./outputs"
+    },
+    "cross_validation": {
+        "description": "扩窗交叉验证参数",
+        "method": "expanding_window",
+        "min_train_samples": 50,
+        "min_valid_samples": 20,
+        "note": "逐年扩窗：[start_year, ..., valid_year-1] 训练，valid_year 验证"
+    },
+    "runtime": {
+        "description": "数值求解与时间离散参数",
+        "days_per_week": 7.0,
+        "days_per_year": 365.0,
+        "seasonal_weeks": 53,
+        "season_week_clip": [
+            0.5,
+            2.0
+        ],
+        "ode_method": "RK45",
+        "optimizer_max_nfev": 220
+    },
+    "data_generation": {
+        "description": "seir.py 数据还原参数",
+        "h3n2_nonlinear_power": 1.1,
+        "noise_mean": 0.0,
+        "noise_std": 0.12,
+        "default_month_baseline": 2.0,
+        "min_ili_pct": 0.0,
+        "round_digits": 2
+    },
+    "seasonal_baseline": {
+        "description": "月度基线（防止模型在流感非季节性低季时预测为负）",
+        "source": "domain_knowledge",
+        "month_baselines": {
+            "1": 3.2,
+            "2": 3.0,
+            "3": 2.5,
+            "4": 2.0,
+            "5": 1.8,
+            "6": 1.6,
+            "7": 1.4,
+            "8": 1.5,
+            "9": 1.8,
+            "10": 2.2,
+            "11": 2.8,
+            "12": 3.2
+        },
+        "note": "单位：百分比（%）"
+    }
+}

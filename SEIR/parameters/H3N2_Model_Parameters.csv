@@ -1,0 +1,16 @@
+﻿parameter,symbol,value_mean,value_min,value_max,unit,prior_distribution,source,notes
+sigma,σ,0.6,0.5,0.71,day⁻¹,"Gamma(5,0.12)",中国CDC; Vink2014,潜伏期倒数
+gamma,γ,0.28,0.24,0.33,day⁻¹,"Gamma(4,0.09)",Carrat2008; WHO2017,感染期倒数
+omega,ω,0.0004,0.00027,0.00055,day⁻¹,"Uniform(0.00027,0.00055)",Kucharski2018,免疫衰减率
+R0,R₀,1.5,1.3,1.8,-,"Normal(1.5,0.2)",中国CDC,基本再生数
+incubation_period,1/σ,1.7,1.4,2,days,-,中国CDC,潜伏期
+infectious_period,1/γ,4,3,4.1,days,-,Carrat2008,感染期
+waning_half_life_adult,T½_adult,4.1,3.2,5.5,years,"Normal(4.1,0.6)",Kucharski2018,成人H3N2保护半衰期
+waning_half_life_child,T½_child,3.5,1.4,5.2,years,"Normal(3.5,1.0)",Kucharski2018,儿童H3N2保护半衰期
+reinfection_interval,T_reinf,2.5,1,4,years,"Gamma(2.5,1.0)",eLife2024,平均再感染间隔
+symptomatic_proportion,P,0.66,0.583,0.745,-,"Beta(6.6,3.4)",Carrat2008,有症状感染比例
+ILI_proportion,Q,0.34,0.26,0.42,-,"Beta(3.4,6.6)",北京研究,有症状者中ILI比例
+consultation_rate_min,C_min,0.5,0.505,0.762,-,-,NHSS2008,就诊率下限
+consultation_rate_max,C_max,0.76,0.505,0.762,-,-,NHSS2008,就诊率上限
+sampling_success,S,0.85,0.8,0.9,-,"Uniform(0.8,0.9)",北京CDC,采样成功率
+test_sensitivity,T,0.975,0.95,1,-,"Uniform(0.95,1.0)",PCR标准,PCR检测灵敏度

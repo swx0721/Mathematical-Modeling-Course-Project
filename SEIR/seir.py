@@ -1,16 +1,25 @@
 import pandas as pd
 import numpy as np
 import os
+import json
 from sklearn.linear_model import LinearRegression
 
-# 1. 路径处理（自动兼容 .py 和 .ipynb 的路径差异）
-current_dir = (
-    os.path.dirname(os.path.abspath(__file__))
-    if "__file__" in locals()
-    else os.getcwd()
-)
-data_path = os.path.join(current_dir, "..", "data", "china_flu_weekly.csv")
-val_path = os.path.join(current_dir, "..", "data", "validation_set_2023_2024.csv")
+# 1. 路径处理与配置加载
+current_dir = os.path.dirname(os.path.abspath(__file__))
+config_path = os.path.join(current_dir, "parameters", "configs.json")
+
+# 加载配置
+with open(config_path, "r", encoding="utf-8") as f:
+    config = json.load(f)
+
+FILE_PATHS = config["file_paths"]
+SEASONAL_BASELINE = config["seasonal_baseline"]["month_baselines"]
+DATA_PROC = config["data_processing"]
+DATA_GEN = config["data_generation"]
+
+# 根据配置的相对路径构建绝对路径
+data_path = os.path.join(current_dir, FILE_PATHS["china_flu_weekly"])
+val_path = os.path.join(current_dir, FILE_PATHS["validation_set"])
 
 try:
     data = pd.read_csv(data_path)
@@ -23,23 +32,8 @@ except FileNotFoundError:
 data["week_start"] = pd.to_datetime(data["week_start"])
 data["month"] = data["week_start"].dt.month
 
-# --- 关键改进 1：定义季节性背景基准 (Baseline) ---
-# 这是一个典型的呼吸道疾病分布：夏季 7-8 月最低，冬季 12-1 月最高
-# 这保证了当 H3N2% 为 0 时，数据能掉到 1.5% 左右的真实水平
-monthly_baseline = {
-    1: 3.2,
-    2: 3.0,
-    3: 2.5,
-    4: 2.0,
-    5: 1.8,
-    6: 1.6,
-    7: 1.4,
-    8: 1.5,
-    9: 1.8,
-    10: 2.2,
-    11: 2.8,
-    12: 3.2,
-}
+# 构造月度基线字典（从配置中读取）
+monthly_baseline = {int(k): v for k, v in SEASONAL_BASELINE.items()}
 
 # --- 关键改进 2：训练“增量模型” ---
 # 我们利用验证集计算：增量 = 真实ILI% - 该月基准
@@ -63,19 +57,22 @@ def predict_ili_realistic(h3n2_pct, month):
         return np.nan
 
     # 基础值
-    base = monthly_baseline.get(month, 2.0)
+    base = monthly_baseline.get(month, DATA_GEN["default_month_baseline"])
 
     # 增量计算：使用 1.1 次方增加爆发感的非线性（阳性率越高，斜率越大）
-    increment = slope * (h3n2_pct**1.1)
+    increment = slope * (h3n2_pct ** DATA_GEN["h3n2_nonlinear_power"])
 
     # 加入随机噪声：真实监测数据是有波动的
     # 均值为0，标准差为 0.12 的正态分布噪声
-    noise = np.random.normal(0, 0.12)
+    noise = np.random.normal(DATA_GEN["noise_mean"], DATA_GEN["noise_std"])
 
     final_val = base + increment + noise
 
     # 限制最低值，防止噪声导致负数或过低值
-    return round(max(0, final_val), 2)
+    return round(
+        max(DATA_GEN["min_ili_pct"], final_val),
+        int(DATA_GEN["round_digits"]),
+    )
 
 
 # 4. 执行填充
@@ -84,7 +81,10 @@ data["ili_pct"] = data.apply(
 )
 
 # 5. 保存
-output_file = r".\data\china_flu_realistic_final.csv"
+output_file = os.path.join(
+    current_dir, FILE_PATHS["output_dir"], "china_flu_realistic_final.csv"
+)
+os.makedirs(os.path.dirname(output_file), exist_ok=True)
 data.drop(columns=["month"]).to_csv(output_file, index=False, encoding="utf-8-sig")
 
 print(f"✅ 还原完成！")
