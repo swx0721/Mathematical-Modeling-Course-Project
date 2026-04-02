@@ -62,11 +62,7 @@ def predict_ili_realistic(h3n2_pct, month):
     # 增量计算：使用 1.1 次方增加爆发感的非线性（阳性率越高，斜率越大）
     increment = slope * (h3n2_pct ** DATA_GEN["h3n2_nonlinear_power"])
 
-    # 加入随机噪声：真实监测数据是有波动的
-    # 均值为0，标准差为 0.12 的正态分布噪声
-    noise = np.random.normal(DATA_GEN["noise_mean"], DATA_GEN["noise_std"])
-
-    final_val = base + increment + noise
+    final_val = base + increment
 
     # 限制最低值，防止噪声导致负数或过低值
     return round(
@@ -76,7 +72,8 @@ def predict_ili_realistic(h3n2_pct, month):
 
 
 # 4. 执行填充
-data["ili_pct"] = data.apply(
+missing_mask = data["ili_pct"].isna()
+data.loc[missing_mask, "ili_pct"] = data.loc[missing_mask].apply(
     lambda row: predict_ili_realistic(row["h3n2_pct"], row["month"]), axis=1
 )
 
@@ -92,4 +89,5 @@ print(
     f"数据特征：月度基准控制在 {min(monthly_baseline.values())}% ~ {max(monthly_baseline.values())}%"
 )
 print(f"拟合增量斜率：{slope:.2f}")
+print(f"仅填充缺失 ili_pct 数量：{int(missing_mask.sum())}")
 print(f"结果已存至：{output_file}")
