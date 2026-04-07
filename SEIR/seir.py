@@ -78,9 +78,7 @@ data.loc[missing_mask, "ili_pct"] = data.loc[missing_mask].apply(
 )
 
 # 5. 保存
-output_file = os.path.join(
-    current_dir, FILE_PATHS["output_dir"], "china_flu_realistic_final.csv"
-)
+output_file = r"data/china_flu_realistic_final.csv"
 os.makedirs(os.path.dirname(output_file), exist_ok=True)
 data.drop(columns=["month"]).to_csv(output_file, index=False, encoding="utf-8-sig")
 
