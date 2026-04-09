@@ -1,2 +1,2 @@
-﻿beta0,sigma,gamma,q_rate,q_release,ve_s,ve_t,ve_l,v_cov_s,v_cov_t,v_cov_l,season_amp,season_phase,omega_v,omega_r,mask_effect,vent_effect,online_effect,club_limit_effect,disinfect_effect,mask_u,vent_u,online_u,club_u,disinfect_u,seed_s,seed_t,seed_l,seed_e_s,seed_e_t,seed_e_l
-0.858,1.161,0.77,0.18,0.06,0.45,0.45,0.45,0.08,0.15,0.12,0.2,30.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,2.0,0.0,0.0,2.0,0.0,0.0
+﻿beta0,sigma,gamma,q_rate,q_release,ve_s,ve_t,ve_l,v_cov_s,v_cov_t,v_cov_l,season_amp,season_phase,omega_v,omega_r,mask_u,vent_u,online_u,club_u,disinfect_u,seed_s,seed_t,seed_l,seed_e_s,seed_e_t,seed_e_l
+0.858,1.161,0.77,0,0,0.38,0.305,0.375,0.3,0.4,0.4,0.225,30.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,2.0,0.0,0.0,2.0,0.0,0.0

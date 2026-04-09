@@ -47,28 +47,34 @@ class CampusLayeredParams:
     beta0: float = 0.858
     sigma: float = 1.161
     gamma: float = 0.770
-    q_rate: float = 0.18
-    q_release: float = 0.06
-    ve_s: float = 0.45
-    ve_t: float = 0.45
-    ve_l: float = 0.45
-    v_cov_s: float = 0.08
-    v_cov_t: float = 0.15
-    v_cov_l: float = 0.12
-    season_amp: float = 0.20
+
+    q_rate: float = 0
+    q_release: float = 0
+
+    ve_s: float = 0.38
+    ve_t: float = 0.305
+    ve_l: float = 0.375
+    v_cov_s: float = 0.3
+    v_cov_t: float = 0.4
+    v_cov_l: float = 0.4
+
+    season_amp: float = 0.225
     season_phase: float = 30.0
+
     omega_v: float = 0.0
     omega_r: float = 0.0
-    mask_effect: float = 0.0
-    vent_effect: float = 0.0
-    online_effect: float = 0.0
-    club_limit_effect: float = 0.0
-    disinfect_effect: float = 0.0
+
+    mask_effect = 0.18
+    vent_effect = 0.3
+    online_effect = 0.715
+    club_limit_effect = 0.4
+    disinfect_effect = 0.175
     mask_u: float = 0.0
     vent_u: float = 0.0
     online_u: float = 0.0
     club_u: float = 0.0
     disinfect_u: float = 0.0
+
     seed_s: float = 2.0
     seed_t: float = 0.0
     seed_l: float = 0.0
@@ -323,24 +329,24 @@ def default_group_sizes() -> Dict[str, float]:
 def default_contact_matrices() -> Dict[str, List[List[float]]]:
     return {
         "dorm": [
-            [12.0, 2.0, 2.5],
-            [1.2, 1.0, 0.4],
-            [2.0, 0.5, 0.8],
+            [8.5, 0.3, 0.2],
+            [0.2, 0.1, 0.05],
+            [0.3, 0.05, 0.4],
         ],
         "class": [
-            [5.0, 2.2, 0.4],
-            [4.0, 3.0, 0.6],
-            [0.5, 0.6, 0.8],
+            [12.0, 2.5, 0.3],
+            [3.0, 1.2, 0.2],
+            [0.4, 0.2, 0.3],
         ],
         "canteen": [
-            [4.0, 0.8, 2.0],
-            [0.9, 1.2, 1.3],
-            [2.2, 1.1, 1.8],
+            [4.5, 0.8, 0.5],
+            [0.7, 0.6, 0.3],
+            [0.6, 0.3, 0.8],
         ],
         "club": [
-            [3.5, 0.7, 0.2],
-            [0.6, 0.3, 0.1],
-            [0.3, 0.1, 0.1],
+            [6.0, 0.5, 0.2],
+            [0.4, 0.3, 0.1],
+            [0.2, 0.1, 0.2],
         ],
     }
 
