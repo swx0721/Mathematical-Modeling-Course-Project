@@ -1,82 +1,95 @@
-import numpy as np
+import json
 import os
+
 import matplotlib.pyplot as plt
+import numpy as np
 from scipy.integrate import solve_ivp
 from scipy.optimize import least_squares
 
 # =========================
-# 1. 基本设置
+# 1. 配置加载
 # =========================
-GROUPS = ["students", "teachers", "staff"]
+current_dir = os.path.dirname(os.path.abspath(__file__))
+config_path = os.path.join(current_dir, "parameters", "configs.json")
+
+with open(config_path, "r", encoding="utf-8") as f:
+    CFG = json.load(f)
+
+GROUPS = CFG["groups"]
 G = len(GROUPS)
 
-# 各群体人口
-N = np.array([18000, 1800, 1200], dtype=float)
+N = np.array(CFG["population"]["N"], dtype=float)
+C = np.array(CFG["population"]["contact_matrix"], dtype=float)
 
-# 接触矩阵 C[g,h]
-# 行表示“谁被感染”，列表示“感染来自谁”
-C = np.array(
-    [
-        [12.0, 2.0, 1.5],  # 学生接触 学生/教师/职工
-        [4.0, 3.0, 1.5],  # 教师接触 学生/教师/职工
-        [3.0, 1.5, 2.0],  # 职工接触 学生/教师/职工
-    ],
-    dtype=float,
-)
+if len(N) != G:
+    raise ValueError("configs.json: population.N length must match groups")
+if C.shape != (G, G):
+    raise ValueError("configs.json: population.contact_matrix must be GxG")
+
+params = {k: float(v) for k, v in CFG["model_parameters"].items()}
+SCENARIOS = CFG["control_scenarios"]
+if not SCENARIOS:
+    raise ValueError("configs.json: control_scenarios cannot be empty")
+
+SIM_CFG = CFG["simulation"]
+FIT_CFG = CFG["fitting"]
+OUT_CFG = CFG["output"]
 
 
 # =========================
-# 2. 分阶段防控策略
+# 2. 场景参数集
 # =========================
-def control_level(t):
+def get_scenario_by_name(name):
+    for scenario in SCENARIOS:
+        if scenario["id"] == name:
+            return scenario
+    raise ValueError(f"configs.json: scenario id not found: {name}")
+
+
+def validate_scenario(scenario):
+    for key in ["id", "label", "u_m", "u_w", "u_s", "u_d", "nu", "q"]:
+        if key not in scenario:
+            raise ValueError(f"configs.json: missing key '{key}' in scenario")
+    nu_vec = np.array(scenario["nu"], dtype=float)
+    q_vec = np.array(scenario["q"], dtype=float)
+    if len(nu_vec) != G or len(q_vec) != G:
+        raise ValueError("configs.json: scenario nu/q length must match groups")
+
+
+for _scenario in SCENARIOS:
+    validate_scenario(_scenario)
+
+
+def scenario_id(scenario):
+    return scenario["id"]
+
+
+def scenario_label(scenario):
+    return scenario["label"]
+
+
+def get_control_level(scenario):
     """
-    根据时间返回防控强度
+    场景固定防控强度
     u_m: 口罩
     u_w: 通风
     u_s: 社团限流
     u_d: 线上授课/教学密度控制
     """
-    # 例子：0-20天常态，20-40天散发，40天后聚集响应
-    if t < 20:
-        return {"u_m": 0.2, "u_w": 0.3, "u_s": 0.1, "u_d": 0.0}
-    elif t < 40:
-        return {"u_m": 0.5, "u_w": 0.6, "u_s": 0.4, "u_d": 0.2}
-    else:
-        return {"u_m": 0.8, "u_w": 0.8, "u_s": 0.8, "u_d": 0.6}
+    return {
+        "u_m": float(scenario["u_m"]),
+        "u_w": float(scenario["u_w"]),
+        "u_s": float(scenario["u_s"]),
+        "u_d": float(scenario["u_d"]),
+    }
 
 
 # =========================
-# 3. 模型参数
+# 3. 季节传播率与干预乘子
 # =========================
-params = {
-    "beta0": 0.035,  # 基线传播率
-    "a": 0.20,  # 季节振幅
-    "phi": 15.0,  # 季节相位
-    "sigma": 1 / 1.5,  # 潜伏期约1.5天 -> E到I速率
-    "gamma": 1 / 4.0,  # 传染期约4天 -> I恢复速率
-    "gamma_q": 1 / 3.0,  # 隔离后恢复速率
-    "eps_v": 0.45,  # 疫苗保护效力(示意值，需查H3N2文献)
-    "omega_r": 1 / 180.0,  # 康复免疫衰减
-    "omega_v": 1 / 150.0,  # 疫苗保护衰减
-    "eta_m": 0.30,  # 口罩措施效果
-    "eta_w": 0.20,  # 通风效果
-    "eta_s": 0.25,  # 限流效果
-    "eta_d": 0.35,  # 线上授课/密度控制效果
-}
-
-# 各群体接种速率
-nu = np.array([0.001, 0.0008, 0.0005], dtype=float)
-
-# 各群体隔离发现速率
-q = np.array([0.08, 0.10, 0.10], dtype=float)
-
-
-# =========================
-# 4. 季节传播率与干预乘子
-# =========================
-def beta_t(t, p):
+def beta_t(t, p, scenario):
     season = 1.0 + p["a"] * np.cos(2 * np.pi * (t - p["phi"]) / 365.0)
-    u = control_level(t)
+    u = get_control_level(scenario)
     measure = (
         (1 - p["eta_m"] * u["u_m"])
         * (1 - p["eta_w"] * u["u_w"])
@@ -87,7 +100,7 @@ def beta_t(t, p):
 
 
 # =========================
-# 5. ODE
+# 4. ODE
 # 状态顺序:
 # [S(3), V(3), E(3), I(3), Q(3), R(3)]
 # =========================
@@ -101,11 +114,12 @@ def unpack(y):
     return S, V, E, I, Qv, R
 
 
-def sveiqr_rhs(t, y, p):
+def sveiqr_rhs(t, y, p, scenario):
     S, V, E, I, Qv, R = unpack(y)
-    bt = beta_t(t, p)
+    bt = beta_t(t, p, scenario)
+    nu = np.array(scenario["nu"], dtype=float)
+    q = np.array(scenario["q"], dtype=float)
 
-    # 感染压力 lambda_g
     infectious_ratio = I / N
     lam = bt * (C @ infectious_ratio)
 
@@ -120,32 +134,57 @@ def sveiqr_rhs(t, y, p):
 
 
 # =========================
-# 6. 初值
+# 5. 初值
 # =========================
-I0 = np.array([5.0, 0.0, 0.0])
-E0 = np.array([8.0, 0.0, 0.0])
-Q0 = np.zeros(G)
-R0 = np.zeros(G)
-V0 = np.array([5000.0, 600.0, 300.0])
+I0 = np.array(CFG["initial_conditions"]["I0"], dtype=float)
+E0 = np.array(CFG["initial_conditions"]["E0"], dtype=float)
+Q0 = np.array(CFG["initial_conditions"]["Q0"], dtype=float)
+R0 = np.array(CFG["initial_conditions"]["R0"], dtype=float)
+V0 = np.array(CFG["initial_conditions"]["V0"], dtype=float)
+
+for name, arr in {
+    "I0": I0,
+    "E0": E0,
+    "Q0": Q0,
+    "R0": R0,
+    "V0": V0,
+}.items():
+    if len(arr) != G:
+        raise ValueError(
+            f"configs.json: initial_conditions.{name} length must match groups"
+        )
+
 S0 = N - V0 - E0 - I0 - Q0 - R0
+if np.any(S0 < 0):
+    raise ValueError("configs.json: invalid initial conditions, found S0 < 0")
 
 y0 = np.concatenate([S0, V0, E0, I0, Q0, R0])
 
 
 # =========================
-# 7. 仿真函数
+# 6. 仿真函数
 # =========================
-def simulate(t_span=(0, 120), t_eval=None, p=None):
+def simulate(t_span=None, t_eval=None, p=None, scenario_name=None):
     if p is None:
         p = params
+    if scenario_name is None:
+        scenario_name = scenario_id(SCENARIOS[0])
+    scenario = get_scenario_by_name(scenario_name)
+    if t_span is None:
+        t_span = (float(SIM_CFG["t_start"]), float(SIM_CFG["t_end"]))
     if t_eval is None:
-        t_eval = np.arange(t_span[0], t_span[1] + 1)
+        t_eval = np.arange(
+            t_span[0],
+            t_span[1] + float(SIM_CFG["t_step"]),
+            float(SIM_CFG["t_step"]),
+        )
 
     sol = solve_ivp(
-        fun=lambda t, y: sveiqr_rhs(t, y, p),
+        fun=lambda t, y: sveiqr_rhs(t, y, p, scenario),
         t_span=t_span,
         y0=y0,
         t_eval=t_eval,
+        method=SIM_CFG["ode_method"],
         vectorized=False,
         dense_output=False,
     )
@@ -153,11 +192,13 @@ def simulate(t_span=(0, 120), t_eval=None, p=None):
 
 
 # =========================
-# 8. 输出指标
+# 7. 输出指标
 # =========================
-def get_outputs(sol, p=None):
+def get_outputs(sol, scenario_name, p=None):
     if p is None:
         p = params
+    scenario = get_scenario_by_name(scenario_name)
+    q = np.array(scenario["q"], dtype=float)
     Y = sol.y
     S, V, E, I, Qv, R = unpack(Y)
 
@@ -165,7 +206,6 @@ def get_outputs(sol, p=None):
     total_Q = Qv.sum(axis=0)
     total_R = R.sum(axis=0)
 
-    # 每日新增报告病例，可近似用 q*I 或 rho*sigma*E
     new_reported = (q[:, None] * I).sum(axis=0)
 
     peak_I = total_I.max()
@@ -184,7 +224,7 @@ def get_outputs(sol, p=None):
     }
 
 
-def plot_outputs(out, save_path):
+def plot_outputs(out, save_path, title_suffix=""):
     plt.figure(figsize=(10, 6))
     plt.plot(out["t"], out["I_total"], label="Infectious (I)", linewidth=2.0)
     plt.plot(out["t"], out["new_reported"], label="New reported", linewidth=2.0)
@@ -192,55 +232,24 @@ def plot_outputs(out, save_path):
     plt.plot(out["t"], out["R_total"], label="Recovered (R)", linewidth=1.8)
     plt.xlabel("Day")
     plt.ylabel("Population")
-    plt.title("SEVIQR Seasonal Simulation Curves")
+    plt.title(f"SEVIQR Seasonal Simulation Curves{title_suffix}")
     plt.grid(alpha=0.3)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(save_path, dpi=200)
+    plt.savefig(save_path, dpi=int(OUT_CFG["dpi"]))
     plt.close()
 
 
 # =========================
-# 9. 参数拟合骨架
-# 这里用每日新增病例 obs_cases 做拟合
-# 你们只需要替换 obs_cases 即可
+# 8. 参数拟合骨架
 # =========================
-obs_days = np.arange(0, 30)
-obs_cases = np.array(
-    [
-        1,
-        2,
-        3,
-        5,
-        8,
-        12,
-        16,
-        20,
-        18,
-        15,
-        13,
-        11,
-        10,
-        9,
-        8,
-        7,
-        6,
-        5,
-        4,
-        4,
-        3,
-        3,
-        2,
-        2,
-        2,
-        1,
-        1,
-        1,
-        1,
-        0,
-    ],
-    dtype=float,
-)
+obs_days = np.array(FIT_CFG["obs_days"], dtype=float)
+obs_cases = np.array(FIT_CFG["obs_cases"], dtype=float)
+
+if len(obs_days) != len(obs_cases):
+    raise ValueError(
+        "configs.json: fitting.obs_days and fitting.obs_cases length must match"
+    )
 
 
 def fit_residual(theta):
@@ -250,31 +259,73 @@ def fit_residual(theta):
     p["sigma"] = sigma
     p["gamma"] = gamma
 
-    sol = simulate(t_span=(0, int(obs_days[-1])), t_eval=obs_days, p=p)
-    pred = get_outputs(sol, p)["new_reported"]
+    fit_scenario = FIT_CFG["scenario_id"]
+    sol = simulate(
+        t_span=(0, int(obs_days[-1])),
+        t_eval=obs_days,
+        p=p,
+        scenario_name=fit_scenario,
+    )
+    pred = get_outputs(sol, scenario_name=fit_scenario, p=p)["new_reported"]
     return pred - obs_cases
 
 
-# 示例：拟合3个参数
-theta0 = np.array([0.035, 1 / 1.5, 1 / 4.0])
-lb = np.array([0.001, 1 / 5.0, 1 / 10.0])
-ub = np.array([0.20, 1 / 0.5, 1 / 1.0])
+theta0 = np.array(FIT_CFG["theta0"], dtype=float)
+lb = np.array(FIT_CFG["bounds"]["lower"], dtype=float)
+ub = np.array(FIT_CFG["bounds"]["upper"], dtype=float)
+
+if not (len(theta0) == len(lb) == len(ub)):
+    raise ValueError("configs.json: fitting.theta0 and bounds size must match")
 
 # result = least_squares(fit_residual, theta0, bounds=(lb, ub))
 # print(result.x)
 
+
 # =========================
-# 10. 运行示例
+# 9. 运行示例
 # =========================
 if __name__ == "__main__":
-    sol = simulate()
-    out = get_outputs(sol)
+    summary_rows = []
+    plt.figure(figsize=(10, 6))
 
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    fig_path = os.path.join(current_dir, "seviqr_curves.png")
-    plot_outputs(out, fig_path)
+    for scenario in SCENARIOS:
+        sid = scenario_id(scenario)
+        slabel = scenario_label(scenario)
+        sol = simulate(scenario_name=sid)
+        out = get_outputs(sol, scenario_name=sid)
 
-    print("Peak infected:", out["peak_I"])
-    print("Peak day:", out["peak_day"])
-    print("Final attack rate:", out["final_attack_rate"])
-    print("Curve saved to:", fig_path)
+        summary_rows.append(
+            {
+                "scenario": sid,
+                "scenario_label": slabel,
+                "peak_I": float(out["peak_I"]),
+                "peak_day": float(out["peak_day"]),
+                "final_attack_rate": float(out["final_attack_rate"]),
+            }
+        )
+
+        plt.plot(out["t"], out["I_total"], linewidth=2.0, label=sid)
+
+        scenario_fig_path = os.path.join(
+            current_dir,
+            f"{sid}_{OUT_CFG['curve_filename']}",
+        )
+        plot_outputs(out, scenario_fig_path, title_suffix=f" - {sid}")
+
+    compare_fig_path = os.path.join(current_dir, OUT_CFG["comparison_curve_filename"])
+    plt.xlabel("Day")
+    plt.ylabel("Infectious population")
+    plt.title("SEVIQR Scenario Comparison: Infectious (I)")
+    plt.grid(alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(compare_fig_path, dpi=int(OUT_CFG["dpi"]))
+    plt.close()
+
+    print("Scenario comparison summary:")
+    print(f"{'Scenario':<20}{'Peak I':>14}{'Peak Day':>14}{'Final Attack Rate':>20}")
+    for row in summary_rows:
+        print(
+            f"{row['scenario_label']:<20}{row['peak_I']:>14.3f}{row['peak_day']:>14.1f}{row['final_attack_rate']:>20.6f}"
+        )
+    print("Comparison curve saved to:", compare_fig_path)
