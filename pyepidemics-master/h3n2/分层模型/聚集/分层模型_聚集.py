@@ -38,13 +38,10 @@ CONTROL_BOUNDS = {
 
 @dataclass
 class ObjectiveWeights:
-    """目标函数总权重与感染目标分项权重。"""
+    """目标函数中的疫情损失权重。"""
 
-    w1: float = 0.70
-    w2: float = 0.15
-    w3: float = 0.15
-    alpha1: float = 0.30
-    alpha2: float = 0.70
+    omega1: float = 1.50
+    omega2: float = 12.00
 
 
 @dataclass
@@ -53,8 +50,8 @@ class CostWeights:
 
     c_m: float = 1.00
     c_v: float = 1.50
-    c_o: float = 50.00
-    c_c: float = 5.00
+    c_o: float = 8.00
+    c_c: float = 3.00
     c_d: float = 2.00
 
 
@@ -62,8 +59,8 @@ class CostWeights:
 class DisruptionWeights:
     """教学秩序损失权重。"""
 
-    d_o: float = 0.70
-    d_c: float = 0.30
+    d_o: float = 4.00
+    d_c: float = 1.50
 
 
 def _normalize_weights(weights: Mapping[str, float]) -> Dict[str, float]:
@@ -80,6 +77,16 @@ def _as_array(matrix: Iterable[Iterable[float]]) -> np.ndarray:
     return arr
 
 
+class _TerminalEvent:
+    def __init__(self, fn, direction: int = -1) -> None:
+        self.fn = fn
+        self.terminal = True
+        self.direction = direction
+
+    def __call__(self, t: float, y: np.ndarray) -> float:
+        return float(self.fn(t, y))
+
+
 @dataclass
 class CampusLayeredParams:
     """模型参数。"""
@@ -88,7 +95,7 @@ class CampusLayeredParams:
     sigma: float = 1.161
     gamma: float = 0.770
 
-    q_rate: float = 0.2
+    q_rate: float = 0.12
     q_release: float = 0.15
 
     ve_s: float = 0.38
@@ -115,10 +122,10 @@ class CampusLayeredParams:
     club_u: float = 0.0
     disinfect_u: float = 0.0
 
-    seed_s: float = 2.0
+    seed_s: float = 18.0
     seed_t: float = 0.0
     seed_l: float = 0.0
-    seed_e_s: float = 2.0
+    seed_e_s: float = 18.0
     seed_e_t: float = 0.0
     seed_e_l: float = 0.0
 
@@ -307,23 +314,40 @@ class CampusLayeredSVEIQR:
 
     def solve(
         self,
-        n_days: int,
+        n_days: int | None = None,
         init_state: Mapping[str, float] | None = None,
         dense_points: int = 1,
+        stop_threshold: float = 1.0,
+        max_days: int = 365,
     ) -> pd.DataFrame:
         if init_state is None:
             init_state = self.initial_state()
 
         y0 = self.pack_state(init_state)
-        t_eval = np.linspace(0.0, float(n_days), int(n_days * dense_points) + 1)
+        horizon_days = int(max_days if n_days is None else n_days)
+        horizon_days = max(horizon_days, 1)
+        t_eval = np.linspace(
+            0.0, float(horizon_days), int(horizon_days * dense_points) + 1
+        )
+
+        e_idx = [self._state_index[f"E_{g}"] for g in GROUPS]
+        i_idx = [self._state_index[f"I_{g}"] for g in GROUPS]
+        q_idx = [self._state_index[f"Q_{g}"] for g in GROUPS]
+
+        def _epidemic_stop_event(_t: float, y: np.ndarray) -> float:
+            active = float(np.sum(y[e_idx]) + np.sum(y[i_idx]) + np.sum(y[q_idx]))
+            return active - float(stop_threshold)
+
+        epidemic_stop_event = _TerminalEvent(_epidemic_stop_event, direction=-1)
         sol = solve_ivp(
             self.derivatives,
-            (0.0, float(n_days)),
+            (0.0, float(horizon_days)),
             y0,
             t_eval=t_eval,
             method="RK45",
             rtol=1e-6,
             atol=1e-8,
+            events=epidemic_stop_event,
         )
 
         if not sol.success:
@@ -367,26 +391,27 @@ def default_group_sizes() -> Dict[str, float]:
 
 
 def default_contact_matrices() -> Dict[str, List[List[float]]]:
+    scales = {"dorm": 1.25, "class": 1.20, "canteen": 1.20, "club": 1.35}
     return {
         "dorm": [
-            [8.5, 0.3, 0.2],
-            [0.2, 0.1, 0.05],
-            [0.3, 0.05, 0.4],
+            [8.5 * scales["dorm"], 0.3 * scales["dorm"], 0.2 * scales["dorm"]],
+            [0.2 * scales["dorm"], 0.1 * scales["dorm"], 0.05 * scales["dorm"]],
+            [0.3 * scales["dorm"], 0.05 * scales["dorm"], 0.4 * scales["dorm"]],
         ],
         "class": [
-            [12.0, 2.5, 0.3],
-            [3.0, 1.2, 0.2],
-            [0.4, 0.2, 0.3],
+            [12.0 * scales["class"], 2.5 * scales["class"], 0.3 * scales["class"]],
+            [3.0 * scales["class"], 1.2 * scales["class"], 0.2 * scales["class"]],
+            [0.4 * scales["class"], 0.2 * scales["class"], 0.3 * scales["class"]],
         ],
         "canteen": [
-            [4.5, 0.8, 0.5],
-            [0.7, 0.6, 0.3],
-            [0.6, 0.3, 0.8],
+            [4.5 * scales["canteen"], 0.8 * scales["canteen"], 0.5 * scales["canteen"]],
+            [0.7 * scales["canteen"], 0.6 * scales["canteen"], 0.3 * scales["canteen"]],
+            [0.6 * scales["canteen"], 0.3 * scales["canteen"], 0.8 * scales["canteen"]],
         ],
         "club": [
-            [6.0, 0.5, 0.2],
-            [0.4, 0.3, 0.1],
-            [0.2, 0.1, 0.2],
+            [6.0 * scales["club"], 0.5 * scales["club"], 0.2 * scales["club"]],
+            [0.4 * scales["club"], 0.3 * scales["club"], 0.1 * scales["club"]],
+            [0.2 * scales["club"], 0.1 * scales["club"], 0.2 * scales["club"]],
         ],
     }
 
@@ -435,43 +460,55 @@ def _clip_01(x: float) -> float:
 
 
 def _build_objective_components(
-    summary: Mapping[str, float],
-    n0: float,
+    trajectory: pd.DataFrame,
     controls: Mapping[str, float],
     objective_weights: ObjectiveWeights,
     cost_weights: CostWeights,
     disruption_weights: DisruptionWeights,
 ) -> Dict[str, float]:
-    attack_rate = float(summary["attack_rate"])
-    peak_i_norm = float(summary["peak_I"]) / max(float(n0), 1e-12)
+    n0 = max(float(trajectory["N"].iloc[0]), 1e-12)
+    t = trajectory.index.to_numpy(dtype=float)
+    horizon = float(t[-1] - t[0]) if len(t) >= 2 else 0.0
 
-    a = objective_weights.alpha1 * attack_rate + objective_weights.alpha2 * peak_i_norm
-    c = (
+    e_ratio = trajectory["E"].to_numpy(dtype=float) / n0
+    i_ratio = trajectory["I"].to_numpy(dtype=float) / n0
+    q_ratio = trajectory["Q"].to_numpy(dtype=float) / n0
+
+    # A: 指数形式 (exp-1保证e=i=q=0时为0)
+    epidemic_exp = objective_weights.omega1 * (
+        np.exp(objective_weights.omega2 * (e_ratio + i_ratio + q_ratio)) - 1.0
+    )
+    a = float(np.trapezoid(epidemic_exp, t))
+
+    # C: 一次项（线性）控制成本
+    c = horizon * (
         cost_weights.c_m * controls["mask_u"]
         + cost_weights.c_v * controls["vent_u"]
         + cost_weights.c_o * controls["online_u"]
         + cost_weights.c_c * controls["club_u"]
         + cost_weights.c_d * controls["disinfect_u"]
     )
-    d = (
+
+    # D: 一次项（线性）教学扰动
+    d = horizon * (
         disruption_weights.d_o * controls["online_u"]
         + disruption_weights.d_c * controls["club_u"]
     )
-    j = objective_weights.w1 * a + objective_weights.w2 * c + objective_weights.w3 * d
+
+    j = a + c + d
 
     return {
         "A": float(a),
         "C": float(c),
         "D": float(d),
         "J": float(j),
-        "attack_rate": attack_rate,
-        "peak_I_norm": peak_i_norm,
+        "peak_I_norm": float(np.max(i_ratio)),
     }
 
 
 def evaluate_controls(
     controls: Mapping[str, float],
-    n_days: int = 220,
+    n_days: int | None = None,
     objective_weights: ObjectiveWeights | None = None,
     cost_weights: CostWeights | None = None,
     disruption_weights: DisruptionWeights | None = None,
@@ -497,10 +534,8 @@ def evaluate_controls(
     )
     trajectory = model.solve(n_days=n_days)
     summary = model.summary(trajectory)
-    n0 = float(trajectory["N"].iloc[0])
     components = _build_objective_components(
-        summary=summary,
-        n0=n0,
+        trajectory=trajectory,
         controls={name: float(getattr(params, name)) for name in CONTROL_NAMES},
         objective_weights=objective_weights,
         cost_weights=cost_weights,
@@ -514,15 +549,15 @@ def evaluate_controls(
 
 
 def optimize_interventions(
-    n_days: int = 220,
+    n_days: int | None = None,
     objective_weights: ObjectiveWeights | None = None,
     cost_weights: CostWeights | None = None,
     disruption_weights: DisruptionWeights | None = None,
     base_params: CampusLayeredParams | None = None,
     maxiter: int = 40,
-    global_maxiter: int = 60,
-    global_popsize: int = 15,
-    global_tol: float = 1e-6,
+    global_maxiter: int = 50,
+    global_popsize: int = 10,
+    global_tol: float = 1e-2,
 ) -> Tuple[CampusLayeredSVEIQR, pd.DataFrame, Dict[str, float], pd.DataFrame]:
     """优化五类防控强度，返回最优模型、轨迹、指标和搜索日志。
 
@@ -640,7 +675,7 @@ def optimize_interventions(
 
 def run_optimization_demo(
     output_dir: str | Path | None = None,
-    n_days: int = 220,
+    n_days: int | None = None,
 ) -> Tuple[CampusLayeredSVEIQR, pd.DataFrame, Dict[str, float]]:
     """执行一次优化示例并可选保存结果。"""
 
@@ -688,6 +723,7 @@ def save_trajectory(trajectory: pd.DataFrame, output_path: str | Path) -> None:
 
 def run_demo(
     output_dir: str | Path | None = None,
+    n_days: int | None = None,
 ) -> Tuple[CampusLayeredSVEIQR, pd.DataFrame, Dict[str, float]]:
     anchor = load_shanghai_seir_anchor()
     model = build_scenario_model("cluster")
@@ -695,7 +731,7 @@ def run_demo(
     model.params.sigma = anchor["sigma"]
     model.params.gamma = anchor["gamma"]
 
-    trajectory = model.solve(n_days=220)
+    trajectory = model.solve(n_days=n_days)
     summary = model.summary(trajectory)
 
     if output_dir is not None:
@@ -836,7 +872,7 @@ def plot_scenario_comparison(output_dir: str | Path | None = None) -> pd.DataFra
     """输出 cluster 场景曲线与汇总表。"""
 
     model = build_scenario_model("cluster")
-    traj = model.solve(n_days=220)
+    traj = model.solve(n_days=None)
     results = [{"scenario": "cluster", **model.summary(traj)}]
 
     fig, axes = plt.subplots(1, 2, figsize=(15, 5), sharex=True)
@@ -883,7 +919,7 @@ if __name__ == "__main__":
     print("Running intervention optimization...")
     opt_model, opt_trajectory, opt_summary = run_optimization_demo(
         output_dir=out_dir,
-        n_days=220,
+        n_days=None,
     )
 
     print("\n===== Optimization Summary =====")

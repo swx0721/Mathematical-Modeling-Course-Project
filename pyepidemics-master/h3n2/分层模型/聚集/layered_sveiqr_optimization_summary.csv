@@ -1,2 +1,2 @@
-﻿A,C,D,J,attack_rate,peak_I_norm,peak_I_day,peak_I,final_R,final_Q,mask_u,vent_u,online_u,club_u,disinfect_u,global_success,global_nit,global_fun,optimizer_success,optimizer_nit,optimizer_fun
-0.49123533577505935,0.0,0.0,0.3438647350425415,0.9749947672096633,0.28390986516022915,5.0,8091.43115706653,27787.350865475404,1.65033856626499e-09,0.0,0.0,0.0,0.0,0.0,0.0,60.0,0.3454632427882388,1.0,1.0,0.3438647350425415
+﻿A,C,D,J,peak_I_norm,peak_I_day,peak_I,final_R,final_Q,attack_rate,mask_u,vent_u,online_u,club_u,disinfect_u,global_success,global_nit,global_fun,optimizer_success,optimizer_nit,optimizer_fun
+821.0604036855026,549.0,244.0,1614.0604036855025,0.2253248582446571,6.0,6421.758459972727,26559.14482424102,1.1440048344250777,0.9318998183944217,1.0,0.0,1.0,0.0,0.0,1.0,18.0,1621.206922977876,1.0,1.0,1614.0604036855025
