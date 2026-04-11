@@ -27,11 +27,11 @@ COMPARTMENTS = ("S", "V", "E", "I", "Q", "R")
 PLACES = ("dorm", "class", "canteen", "club")
 CONTROL_NAMES = ("mask_u", "vent_u", "online_u", "club_u", "disinfect_u")
 CONTROL_BOUNDS = {
-    "mask_u": (0.0, 0.2),
-    "vent_u": (0.0, 0.3),
-    "online_u": (0.0, 0.0),
-    "club_u": (0.0, 0.2),
-    "disinfect_u": (0.1, 0.3),
+    "mask_u": (0.0, 0.8),
+    "vent_u": (0.0, 0.7),
+    "online_u": (0.0, 0.6),
+    "club_u": (0.0, 0.8),
+    "disinfect_u": (0.0, 0.6),
 }
 
 
@@ -39,11 +39,11 @@ CONTROL_BOUNDS = {
 class ObjectiveWeights:
     """目标函数总权重与感染目标分项权重。"""
 
-    w1: float = 0.20
-    w2: float = 0.40
-    w3: float = 0.40
-    alpha1: float = 0.50
-    alpha2: float = 0.50
+    w1: float = 0.70
+    w2: float = 0.15
+    w3: float = 0.15
+    alpha1: float = 0.30
+    alpha2: float = 0.70
 
 
 @dataclass
@@ -87,7 +87,7 @@ class CampusLayeredParams:
     sigma: float = 1.161
     gamma: float = 0.770
 
-    q_rate: float = 0.2
+    q_rate: float = 0.25
     q_release: float = 0.15
 
     ve_s: float = 0.38
@@ -114,10 +114,10 @@ class CampusLayeredParams:
     club_u: float = 0.0
     disinfect_u: float = 0.0
 
-    seed_s: float = 2.0
+    seed_s: float = 10.0
     seed_t: float = 0.0
     seed_l: float = 0.0
-    seed_e_s: float = 2.0
+    seed_e_s: float = 5.0
     seed_e_t: float = 0.0
     seed_e_l: float = 0.0
 
@@ -407,8 +407,8 @@ def build_scenario_model(scenario: str = "baseline") -> CampusLayeredSVEIQR:
     params = CampusLayeredParams()
     scenario = scenario.lower().strip()
 
-    if scenario != "baseline":
-        raise ValueError("only 'baseline' scenario is supported in this script")
+    if scenario != "cluster":
+        raise ValueError("only 'cluster' scenario is supported in this script")
 
     return CampusLayeredSVEIQR(
         group_sizes=default_group_sizes(),
@@ -650,7 +650,7 @@ def run_demo(
     output_dir: str | Path | None = None,
 ) -> Tuple[CampusLayeredSVEIQR, pd.DataFrame, Dict[str, float]]:
     anchor = load_shanghai_seir_anchor()
-    model = build_baseline_model()
+    model = build_scenario_model("cluster")
     model.params.beta0 = anchor["beta"]
     model.params.sigma = anchor["sigma"]
     model.params.gamma = anchor["gamma"]
@@ -710,7 +710,7 @@ def plot_detailed_results(
     model: CampusLayeredSVEIQR,
     trajectory: pd.DataFrame,
     output_dir: str | Path | None = None,
-    title_suffix: str = "Baseline",
+    title_suffix: str = "Cluster",
 ) -> pd.DataFrame:
     """生成详细图形并可选保存到文件。"""
 
@@ -793,25 +793,25 @@ def plot_detailed_results(
 
 
 def plot_scenario_comparison(output_dir: str | Path | None = None) -> pd.DataFrame:
-    """输出 baseline 场景曲线与汇总表。"""
+    """输出 cluster 场景曲线与汇总表。"""
 
-    model = build_scenario_model("baseline")
+    model = build_scenario_model("cluster")
     traj = model.solve(n_days=220)
-    results = [{"scenario": "baseline", **model.summary(traj)}]
+    results = [{"scenario": "cluster", **model.summary(traj)}]
 
     fig, axes = plt.subplots(1, 2, figsize=(15, 5), sharex=True)
-    axes[0].plot(traj.index, traj["I"], linewidth=2.0, label="Baseline")
+    axes[0].plot(traj.index, traj["I"], linewidth=2.0, label="Cluster")
     new_exp = -(traj["S"].diff().fillna(0.0) + traj["V"].diff().fillna(0.0))
     new_exp = new_exp.clip(lower=0.0)
-    axes[1].plot(traj.index, new_exp, linewidth=2.0, label="Baseline")
+    axes[1].plot(traj.index, new_exp, linewidth=2.0, label="Cluster")
 
-    axes[0].set_title("Total Infectious (Baseline)")
+    axes[0].set_title("Total Infectious (Cluster)")
     axes[0].set_xlabel("Day")
     axes[0].set_ylabel("Infectious population")
     axes[0].legend()
     axes[0].grid(alpha=0.25)
 
-    axes[1].set_title("Daily New Exposures (Baseline)")
+    axes[1].set_title("Daily New Exposures (Cluster)")
     axes[1].set_xlabel("Day")
     axes[1].set_ylabel("People/day")
     axes[1].legend()
@@ -853,7 +853,7 @@ if __name__ == "__main__":
         model=model,
         trajectory=trajectory,
         output_dir=Path(__file__).resolve().parent,
-        title_suffix="Baseline",
+        title_suffix="Cluster",
     )
 
     print("Generating scenario comparison figures...")
