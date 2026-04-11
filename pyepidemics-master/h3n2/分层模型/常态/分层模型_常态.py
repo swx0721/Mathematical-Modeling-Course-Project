@@ -19,7 +19,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.integrate import solve_ivp
-from scipy.optimize import minimize
+from scipy.optimize import minimize, differential_evolution
+from tqdm.auto import tqdm
 
 
 GROUPS = ("s", "t", "l")
@@ -27,11 +28,11 @@ COMPARTMENTS = ("S", "V", "E", "I", "Q", "R")
 PLACES = ("dorm", "class", "canteen", "club")
 CONTROL_NAMES = ("mask_u", "vent_u", "online_u", "club_u", "disinfect_u")
 CONTROL_BOUNDS = {
-    "mask_u": (0.0, 0.2),
-    "vent_u": (0.0, 0.3),
-    "online_u": (0.0, 0.0),
-    "club_u": (0.0, 0.2),
-    "disinfect_u": (0.1, 0.3),
+    "mask_u": (0.0, 1.0),
+    "vent_u": (0.0, 1.0),
+    "online_u": (0.0, 1.0),
+    "club_u": (0.0, 1.0),
+    "disinfect_u": (0.0, 1.0),
 }
 
 
@@ -519,27 +520,20 @@ def optimize_interventions(
     disruption_weights: DisruptionWeights | None = None,
     base_params: CampusLayeredParams | None = None,
     maxiter: int = 40,
+    global_maxiter: int = 60,
+    global_popsize: int = 15,
+    global_tol: float = 1e-6,
 ) -> Tuple[CampusLayeredSVEIQR, pd.DataFrame, Dict[str, float], pd.DataFrame]:
-    """优化五类防控强度，返回最优模型、轨迹、指标和搜索日志。"""
+    """优化五类防控强度，返回最优模型、轨迹、指标和搜索日志。
+
+    采用两阶段策略：先用 differential_evolution 全局搜索，再用 L-BFGS-B 局部精修。
+    """
 
     objective_weights = objective_weights or ObjectiveWeights()
     cost_weights = cost_weights or CostWeights()
     disruption_weights = disruption_weights or DisruptionWeights()
     params0 = replace(base_params) if base_params is not None else CampusLayeredParams()
 
-    x0 = np.array(
-        [
-            float(
-                np.clip(
-                    float(getattr(params0, name)),
-                    CONTROL_BOUNDS[name][0],
-                    CONTROL_BOUNDS[name][1],
-                )
-            )
-            for name in CONTROL_NAMES
-        ],
-        dtype=float,
-    )
     bounds = [CONTROL_BOUNDS[name] for name in CONTROL_NAMES]
     records: List[Dict[str, float]] = []
 
@@ -556,16 +550,59 @@ def optimize_interventions(
         records.append(metrics)
         return float(metrics["J"])
 
-    result = minimize(
+    pbar = tqdm(
+        total=int(global_maxiter),
+        desc="Global optimization",
+        unit="gen",
+        dynamic_ncols=True,
+        leave=False,
+    )
+
+    def _de_callback(_xk: np.ndarray, convergence: float) -> bool:
+        _ = convergence
+        pbar.update(1)
+        return False
+
+    # ---- Stage 1: Global search with differential_evolution ----
+    try:
+        global_result = differential_evolution(
+            _objective,
+            bounds=bounds,
+            maxiter=int(global_maxiter),
+            popsize=int(global_popsize),
+            tol=float(global_tol),
+            rng=42,
+            polish=False,
+            callback=_de_callback,
+        )
+        if pbar.n < pbar.total:
+            pbar.update(pbar.total - pbar.n)
+    finally:
+        pbar.close()
+
+    # ---- Stage 2: Local refinement with L-BFGS-B ----
+    local_result = minimize(
         _objective,
-        x0,
+        global_result.x,
         method="L-BFGS-B",
         bounds=bounds,
         options={"maxiter": int(maxiter)},
     )
 
+    # Use the better of the two results
+    if local_result.fun <= global_result.fun:
+        best_x = local_result.x
+        best_fun = local_result.fun
+        local_success = local_result.success
+        local_nit = local_result.nit
+    else:
+        best_x = global_result.x
+        best_fun = global_result.fun
+        local_success = True
+        local_nit = 0
+
     best_controls = {
-        name: _clip_01(result.x[idx]) for idx, name in enumerate(CONTROL_NAMES)
+        name: _clip_01(best_x[idx]) for idx, name in enumerate(CONTROL_NAMES)
     }
     best_metrics = evaluate_controls(
         controls=best_controls,
@@ -590,9 +627,12 @@ def optimize_interventions(
 
     best_summary = {
         **best_metrics,
-        "optimizer_success": float(bool(result.success)),
-        "optimizer_nit": float(result.nit),
-        "optimizer_fun": float(result.fun),
+        "global_success": float(bool(global_result.success)),
+        "global_nit": float(global_result.nit),
+        "global_fun": float(global_result.fun),
+        "optimizer_success": float(bool(local_success)),
+        "optimizer_nit": float(local_nit),
+        "optimizer_fun": float(best_fun),
     }
     history = pd.DataFrame(records)
     return best_model, best_trajectory, best_summary, history
@@ -838,36 +878,15 @@ def plot_scenario_comparison(output_dir: str | Path | None = None) -> pd.DataFra
 
 
 if __name__ == "__main__":
-    model, trajectory, summary = run_demo(output_dir=Path(__file__).resolve().parent)
-    print("Model state names:")
-    print(", ".join(model.state_names))
-    print("Summary:")
-    for key, value in summary.items():
-        if key.endswith("_day"):
-            print(f"  {key}: {value:.2f}")
-        else:
-            print(f"  {key}: {value:.4f}")
-
-    print("Generating detailed figures...")
-    plot_detailed_results(
-        model=model,
-        trajectory=trajectory,
-        output_dir=Path(__file__).resolve().parent,
-        title_suffix="Baseline",
-    )
-
-    print("Generating scenario comparison figures...")
-    scenario_table = plot_scenario_comparison(
-        output_dir=Path(__file__).resolve().parent
-    )
-    print(scenario_table)
+    out_dir = Path(__file__).resolve().parent
 
     print("Running intervention optimization...")
     opt_model, opt_trajectory, opt_summary = run_optimization_demo(
-        output_dir=Path(__file__).resolve().parent,
+        output_dir=out_dir,
         n_days=220,
     )
-    print("Optimization summary:")
+
+    print("\n===== Optimization Summary =====")
     for key in [
         "J",
         "A",
@@ -880,15 +899,20 @@ if __name__ == "__main__":
         "online_u",
         "club_u",
         "disinfect_u",
+        "global_success",
+        "global_nit",
+        "global_fun",
         "optimizer_success",
         "optimizer_nit",
+        "optimizer_fun",
     ]:
         if key in opt_summary:
             print(f"  {key}: {opt_summary[key]:.6f}")
 
+    print("\nGenerating optimized figures...")
     plot_detailed_results(
         model=opt_model,
         trajectory=opt_trajectory,
-        output_dir=Path(__file__).resolve().parent,
+        output_dir=out_dir,
         title_suffix="Optimized",
     )

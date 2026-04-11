@@ -1,3 +1,0 @@
-twine upload dist/*
-
-pause
