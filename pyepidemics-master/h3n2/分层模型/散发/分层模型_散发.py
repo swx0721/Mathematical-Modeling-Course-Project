@@ -78,6 +78,12 @@ class DisruptionWeights:
     d_q_load: float = 30.00
 
 
+SEASON_START_DAY = {
+    "winter_spring_peak": 350.0,
+    "off_season": 200.0,
+}
+
+
 def _normalize_weights(weights: Mapping[str, float]) -> Dict[str, float]:
     total = float(sum(weights.values()))
     if total <= 0:
@@ -121,22 +127,23 @@ class CampusLayeredParams:
     ve_s: float = 0.38
     ve_t: float = 0.305
     ve_l: float = 0.375
-    v_cov_s: float = 0.3
-    v_cov_t: float = 0.4
-    v_cov_l: float = 0.4
+    v_cov_s: float = 0.2
+    v_cov_t: float = 0.12
+    v_cov_l: float = 0.12
     vax_cov_scale: float = 1.0
 
     season_amp: float = 0.225
     season_phase: float = 30.0
+    season_start_day: float = 0.0
 
     omega_v: float = 0.0
     omega_r: float = 0.0
 
-    mask_effect = 0.18
+    mask_effect = 0.40
     vent_effect = 0.3
     online_effect = 0.715
     club_limit_effect = 0.4
-    disinfect_effect = 0.175
+    disinfect_effect = 0.60
     mask_u: float = 0.0
     vent_u: float = 0.0
     online_u: float = 0.0
@@ -195,7 +202,12 @@ class CampusLayeredSVEIQR:
             * (
                 1.0
                 + params.season_amp
-                * np.cos(2.0 * np.pi * (t - params.season_phase) / 365.0)
+                * np.cos(
+                    2.0
+                    * np.pi
+                    * (t + params.season_start_day - params.season_phase)
+                    / 365.0
+                )
             )
         )
 
@@ -458,17 +470,46 @@ def default_place_weights() -> Dict[str, float]:
     return {"dorm": 0.35, "class": 0.40, "canteen": 0.15, "club": 0.10}
 
 
-def build_baseline_model() -> CampusLayeredSVEIQR:
+def apply_season_profile(
+    params: CampusLayeredParams, season_profile: str | None
+) -> CampusLayeredParams:
+    if season_profile is None:
+        return params
+
+    profile = season_profile.strip().lower().replace("-", "_")
+    aliases = {
+        "winter": "winter_spring_peak",
+        "winter_spring": "winter_spring_peak",
+        "peak": "winter_spring_peak",
+        "off": "off_season",
+        "low": "off_season",
+        "non_peak": "off_season",
+    }
+    profile = aliases.get(profile, profile)
+
+    if profile not in SEASON_START_DAY:
+        raise ValueError(
+            "season_profile must be one of: " "'winter_spring_peak', 'off_season'"
+        )
+
+    params.season_start_day = float(SEASON_START_DAY[profile])
+    return params
+
+
+def build_baseline_model(season_profile: str | None = None) -> CampusLayeredSVEIQR:
+    params = apply_season_profile(CampusLayeredParams(), season_profile)
     return CampusLayeredSVEIQR(
         group_sizes=default_group_sizes(),
         contact_matrices=default_contact_matrices(),
         place_weights=default_place_weights(),
-        params=CampusLayeredParams(),
+        params=params,
     )
 
 
-def build_scenario_model(scenario: str = "baseline") -> CampusLayeredSVEIQR:
-    params = CampusLayeredParams()
+def build_scenario_model(
+    scenario: str = "baseline", season_profile: str | None = None
+) -> CampusLayeredSVEIQR:
+    params = apply_season_profile(CampusLayeredParams(), season_profile)
     scenario = scenario.lower().strip()
 
     if scenario != "sporadic":
@@ -769,12 +810,15 @@ def save_trajectory(trajectory: pd.DataFrame, output_path: str | Path) -> None:
     trajectory.to_csv(output_path, encoding="utf-8-sig")
 
 
+# 冬春高发季：season_profile="winter_spring_peak"
+# 非高发季：season_profile="off_season"
 def run_demo(
     output_dir: str | Path | None = None,
     n_days: int | None = None,
+    season_profile: str | None = None,
 ) -> Tuple[CampusLayeredSVEIQR, pd.DataFrame, Dict[str, float]]:
     anchor = load_shanghai_seir_anchor()
-    model = build_scenario_model("sporadic")
+    model = build_scenario_model("sporadic", season_profile=season_profile)
     model.params.beta0 = anchor["beta"]
     model.params.sigma = anchor["sigma"]
     model.params.gamma = anchor["gamma"]
