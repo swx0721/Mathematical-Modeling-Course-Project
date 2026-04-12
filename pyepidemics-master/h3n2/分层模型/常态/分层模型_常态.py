@@ -33,6 +33,7 @@ CONTROL_NAMES = (
     "club_u",
     "disinfect_u",
     "vax_cov_scale",
+    "q_scale",
 )
 CONTROL_BOUNDS = {
     "mask_u": (0.0, 1.0),
@@ -41,6 +42,7 @@ CONTROL_BOUNDS = {
     "club_u": (0.0, 1.0),
     "disinfect_u": (0.0, 1.0),
     "vax_cov_scale": (0.0, 5.0),
+    "q_scale": (0.0, 10.0),
 }
 
 
@@ -62,6 +64,8 @@ class CostWeights:
     c_c: float = 3.00
     c_d: float = 2.00
     c_vax: float = 10.00
+    c_q: float = 2.00
+    c_q2: float = 0.50
 
 
 @dataclass
@@ -70,6 +74,8 @@ class DisruptionWeights:
 
     d_o: float = 6.00
     d_c: float = 2.00
+    d_q_policy: float = 1.00
+    d_q_load: float = 30.00
 
 
 def _normalize_weights(weights: Mapping[str, float]) -> Dict[str, float]:
@@ -106,6 +112,11 @@ class CampusLayeredParams:
 
     q_rate: float = 0.22
     q_release: float = 0.15
+    q_scale: float = 1.0
+    q_sat_k: float = 1.0
+    q_gain_max: float = 3.0
+    q_capacity_alpha: float = 10.0
+    q_rate_cap: float = 1.0
 
     ve_s: float = 0.38
     ve_t: float = 0.305
@@ -276,6 +287,18 @@ class CampusLayeredSVEIQR:
         params = self.params
         lam = self.force_of_infection(y, t)
         dydt = np.zeros_like(y, dtype=float)
+        i_total = float(sum(y[self._state_index[f"I_{g}"]] for g in GROUPS))
+        i_ratio = i_total / max(self.total_population(), 1e-12)
+        q_scale_nonneg = max(float(params.q_scale), 0.0)
+        q_sat_k = max(float(params.q_sat_k), 1e-12)
+        q_response = q_scale_nonneg / (q_sat_k + q_scale_nonneg)
+        q_rate_cmd = float(params.q_rate) * (
+            1.0 + float(params.q_gain_max) * q_response
+        )
+        q_rate_eff = q_rate_cmd / (
+            1.0 + float(params.q_capacity_alpha) * max(i_ratio, 0.0)
+        )
+        q_rate_eff = min(max(q_rate_eff, 0.0), float(params.q_rate_cap))
 
         for group_idx, group in enumerate(GROUPS):
             base = group_idx * len(COMPARTMENTS)
@@ -291,8 +314,8 @@ class CampusLayeredSVEIQR:
             dydt[base + 0] = -susceptible_loss
             dydt[base + 1] = -vaccinated_loss
             dydt[base + 2] = susceptible_loss + vaccinated_loss - params.sigma * e
-            dydt[base + 3] = params.sigma * e - params.gamma * i - params.q_rate * i
-            dydt[base + 4] = params.q_rate * i - params.q_release * q
+            dydt[base + 3] = params.sigma * e - params.gamma * i - q_rate_eff * i
+            dydt[base + 4] = q_rate_eff * i - params.q_release * q
             dydt[base + 5] = params.gamma * i + params.q_release * q
 
         return dydt
@@ -498,6 +521,7 @@ def _build_objective_components(
     a = float(np.trapezoid(epidemic_exp, t))
 
     # C: 一次项（线性）控制成本
+    q_excess = max(0.0, controls["q_scale"] - 1.0)
     c = horizon * (
         cost_weights.c_m * controls["mask_u"]
         + cost_weights.c_v * controls["vent_u"]
@@ -505,13 +529,18 @@ def _build_objective_components(
         + cost_weights.c_c * controls["club_u"]
         + cost_weights.c_d * controls["disinfect_u"]
         + cost_weights.c_vax * max(0.0, controls["vax_cov_scale"] - 1.0)
+        + cost_weights.c_q * q_excess
+        + cost_weights.c_q2 * q_excess * q_excess
     )
 
-    # D: 一次项（线性）教学扰动
-    d = horizon * (
+    # D: 策略扰动 + 隔离负荷扰动
+    d_policy = horizon * (
         disruption_weights.d_o * controls["online_u"]
         + disruption_weights.d_c * controls["club_u"]
+        + disruption_weights.d_q_policy * controls["q_scale"]
     )
+    d_load = disruption_weights.d_q_load * float(np.trapezoid(q_ratio, t))
+    d = d_policy + d_load
 
     j = a + c + d
 
@@ -577,7 +606,7 @@ def optimize_interventions(
     global_popsize: int = 10,
     global_tol: float = 1e-2,
 ) -> Tuple[CampusLayeredSVEIQR, pd.DataFrame, Dict[str, float], pd.DataFrame]:
-    """优化六类防控强度，返回最优模型、轨迹、指标和搜索日志。
+    """优化七类防控强度，返回最优模型、轨迹、指标和搜索日志。
 
     采用两阶段策略：先用 differential_evolution 全局搜索，再用 L-BFGS-B 局部精修。
     """
@@ -956,6 +985,7 @@ if __name__ == "__main__":
         "club_u",
         "disinfect_u",
         "vax_cov_scale",
+        "q_scale",
         "global_success",
         "global_nit",
         "global_fun",
