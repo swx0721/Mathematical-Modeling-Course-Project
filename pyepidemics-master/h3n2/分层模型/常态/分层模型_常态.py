@@ -26,13 +26,21 @@ from tqdm.auto import tqdm
 GROUPS = ("s", "t", "l")
 COMPARTMENTS = ("S", "V", "E", "I", "Q", "R")
 PLACES = ("dorm", "class", "canteen", "club")
-CONTROL_NAMES = ("mask_u", "vent_u", "online_u", "club_u", "disinfect_u")
+CONTROL_NAMES = (
+    "mask_u",
+    "vent_u",
+    "online_u",
+    "club_u",
+    "disinfect_u",
+    "vax_cov_scale",
+)
 CONTROL_BOUNDS = {
     "mask_u": (0.0, 1.0),
     "vent_u": (0.0, 1.0),
     "online_u": (0.0, 1.0),
     "club_u": (0.0, 1.0),
     "disinfect_u": (0.0, 1.0),
+    "vax_cov_scale": (0.0, 5.0),
 }
 
 
@@ -53,6 +61,7 @@ class CostWeights:
     c_o: float = 8.00
     c_c: float = 3.00
     c_d: float = 2.00
+    c_vax: float = 10.00
 
 
 @dataclass
@@ -104,6 +113,7 @@ class CampusLayeredParams:
     v_cov_s: float = 0.3
     v_cov_t: float = 0.4
     v_cov_l: float = 0.4
+    vax_cov_scale: float = 1.0
 
     season_amp: float = 0.225
     season_phase: float = 30.0
@@ -290,7 +300,12 @@ class CampusLayeredSVEIQR:
     def initial_state(self) -> Dict[str, float]:
         params = self.params
         init: Dict[str, float] = {}
-        coverage = {"s": params.v_cov_s, "t": params.v_cov_t, "l": params.v_cov_l}
+        scale = float(np.clip(params.vax_cov_scale, 0.0, 10.0))
+        coverage = {
+            "s": float(np.clip(params.v_cov_s * scale, 0.0, 1.0)),
+            "t": float(np.clip(params.v_cov_t * scale, 0.0, 1.0)),
+            "l": float(np.clip(params.v_cov_l * scale, 0.0, 1.0)),
+        }
         seeds_i = {"s": params.seed_s, "t": params.seed_t, "l": params.seed_l}
         seeds_e = {"s": params.seed_e_s, "t": params.seed_e_t, "l": params.seed_e_l}
 
@@ -456,8 +471,9 @@ def load_shanghai_seir_anchor(csv_path: str | Path | None = None) -> Dict[str, f
     return {"beta": 0.858, "sigma": 1.161, "gamma": 0.770}
 
 
-def _clip_01(x: float) -> float:
-    return float(np.clip(float(x), 0.0, 1.0))
+def _clip_control(name: str, x: float) -> float:
+    low, high = CONTROL_BOUNDS[name]
+    return float(np.clip(float(x), low, high))
 
 
 def _build_objective_components(
@@ -488,6 +504,7 @@ def _build_objective_components(
         + cost_weights.c_o * controls["online_u"]
         + cost_weights.c_c * controls["club_u"]
         + cost_weights.c_d * controls["disinfect_u"]
+        + cost_weights.c_vax * max(0.0, controls["vax_cov_scale"] - 1.0)
     )
 
     # D: 一次项（线性）教学扰动
@@ -524,7 +541,7 @@ def evaluate_controls(
     params = replace(base_params) if base_params is not None else CampusLayeredParams()
     for name in CONTROL_NAMES:
         low, high = CONTROL_BOUNDS[name]
-        value = float(controls.get(name, low))
+        value = float(controls.get(name, getattr(params, name)))
         setattr(params, name, float(np.clip(value, low, high)))
 
     model = CampusLayeredSVEIQR(
@@ -560,7 +577,7 @@ def optimize_interventions(
     global_popsize: int = 10,
     global_tol: float = 1e-2,
 ) -> Tuple[CampusLayeredSVEIQR, pd.DataFrame, Dict[str, float], pd.DataFrame]:
-    """优化五类防控强度，返回最优模型、轨迹、指标和搜索日志。
+    """优化六类防控强度，返回最优模型、轨迹、指标和搜索日志。
 
     采用两阶段策略：先用 differential_evolution 全局搜索，再用 L-BFGS-B 局部精修。
     """
@@ -574,7 +591,9 @@ def optimize_interventions(
     records: List[Dict[str, float]] = []
 
     def _objective(x: np.ndarray) -> float:
-        controls = {name: _clip_01(x[idx]) for idx, name in enumerate(CONTROL_NAMES)}
+        controls = {
+            name: _clip_control(name, x[idx]) for idx, name in enumerate(CONTROL_NAMES)
+        }
         metrics = evaluate_controls(
             controls=controls,
             n_days=n_days,
@@ -638,7 +657,7 @@ def optimize_interventions(
         local_nit = 0
 
     best_controls = {
-        name: _clip_01(best_x[idx]) for idx, name in enumerate(CONTROL_NAMES)
+        name: _clip_control(name, best_x[idx]) for idx, name in enumerate(CONTROL_NAMES)
     }
     best_metrics = evaluate_controls(
         controls=best_controls,
@@ -936,6 +955,7 @@ if __name__ == "__main__":
         "online_u",
         "club_u",
         "disinfect_u",
+        "vax_cov_scale",
         "global_success",
         "global_nit",
         "global_fun",
