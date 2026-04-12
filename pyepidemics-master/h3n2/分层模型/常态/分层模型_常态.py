@@ -642,8 +642,8 @@ def optimize_interventions(
     cost_weights: CostWeights | None = None,
     disruption_weights: DisruptionWeights | None = None,
     base_params: CampusLayeredParams | None = None,
-    maxiter: int = 40,
-    global_maxiter: int = 50,
+    maxiter: int = 100,
+    global_maxiter: int = 100,
     global_popsize: int = 10,
     global_tol: float = 1e-2,
 ) -> Tuple[CampusLayeredSVEIQR, pd.DataFrame, Dict[str, float], pd.DataFrame]:
@@ -809,6 +809,7 @@ def save_trajectory(trajectory: pd.DataFrame, output_path: str | Path) -> None:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     trajectory.to_csv(output_path, encoding="utf-8-sig")
+
 
 # 冬春高发季：season_profile="winter_spring_peak"
 # 非高发季：season_profile="off_season"

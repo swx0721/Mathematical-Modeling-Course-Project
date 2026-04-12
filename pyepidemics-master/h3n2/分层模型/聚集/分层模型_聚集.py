@@ -641,8 +641,8 @@ def optimize_interventions(
     cost_weights: CostWeights | None = None,
     disruption_weights: DisruptionWeights | None = None,
     base_params: CampusLayeredParams | None = None,
-    maxiter: int = 40,
-    global_maxiter: int = 50,
+    maxiter: int = 100,
+    global_maxiter: int = 100,
     global_popsize: int = 10,
     global_tol: float = 1e-2,
 ) -> Tuple[CampusLayeredSVEIQR, pd.DataFrame, Dict[str, float], pd.DataFrame]:
