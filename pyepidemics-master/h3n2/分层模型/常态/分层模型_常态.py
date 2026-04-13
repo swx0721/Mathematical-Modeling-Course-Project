@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 from scipy.integrate import solve_ivp
 from scipy.optimize import minimize, differential_evolution
+from scipy.stats import rankdata, t as student_t
 from tqdm.auto import tqdm
 
 
@@ -811,6 +812,216 @@ def save_trajectory(trajectory: pd.DataFrame, output_path: str | Path) -> None:
     trajectory.to_csv(output_path, encoding="utf-8-sig")
 
 
+def _effective_q_rate(params: CampusLayeredParams, i_ratio: float) -> float:
+    q_scale_nonneg = max(float(params.q_scale), 0.0)
+    q_sat_k = max(float(params.q_sat_k), 1e-12)
+    q_response = q_scale_nonneg / (q_sat_k + q_scale_nonneg)
+    q_rate_cmd = float(params.q_rate) * (1.0 + float(params.q_gain_max) * q_response)
+    q_rate_eff = q_rate_cmd / (
+        1.0 + float(params.q_capacity_alpha) * max(float(i_ratio), 0.0)
+    )
+    return float(min(max(q_rate_eff, 0.0), float(params.q_rate_cap)))
+
+
+def effective_reproduction_number(
+    model: CampusLayeredSVEIQR,
+    t: float = 0.0,
+    state: Mapping[str, float] | None = None,
+) -> float:
+    if state is None:
+        state = model.initial_state()
+
+    params = model.params
+    infectious_total = float(sum(float(state.get(f"I_{g}", 0.0)) for g in GROUPS))
+    i_ratio = infectious_total / max(model.total_population(), 1e-12)
+    q_eff = _effective_q_rate(params, i_ratio)
+    removal = max(float(params.gamma) + q_eff, 1e-12)
+
+    ng = len(GROUPS)
+    ngm = np.zeros((ng, ng), dtype=float)
+
+    for g_idx, g in enumerate(GROUPS):
+        s_eff = float(state.get(f"S_{g}", 0.0)) + (
+            1.0 - model.vaccine_effect(g)
+        ) * float(state.get(f"V_{g}", 0.0))
+
+        for h_idx, h in enumerate(GROUPS):
+            kernel = 0.0
+            for place in PLACES:
+                beta_k = model.adjusted_place_beta(place, t)
+                w_k = model.place_weight(place, t)
+                c_gh = float(model.contact_matrices[place][g_idx, h_idx])
+                nh = max(float(model.group_sizes[h]), 1e-12)
+                kernel += w_k * beta_k * c_gh / nh
+            ngm[g_idx, h_idx] = (s_eff * kernel) / removal
+
+    eigvals = np.linalg.eigvals(ngm)
+    return float(np.max(np.real(eigvals)))
+
+
+def _lhs_unit(n_samples: int, n_dim: int, rng: np.random.Generator) -> np.ndarray:
+    samples = np.zeros((n_samples, n_dim), dtype=float)
+    cut = np.linspace(0.0, 1.0, n_samples + 1)
+    for idx in range(n_dim):
+        u = rng.uniform(cut[:-1], cut[1:])
+        rng.shuffle(u)
+        samples[:, idx] = u
+    return samples
+
+
+def _ols_residuals(target: np.ndarray, predictors: np.ndarray) -> np.ndarray:
+    y = np.asarray(target, dtype=float)
+    x = np.asarray(predictors, dtype=float)
+    if x.size == 0:
+        return y - np.mean(y)
+    x_design = np.column_stack([np.ones(len(y)), x])
+    coef, *_ = np.linalg.lstsq(x_design, y, rcond=None)
+    return y - x_design @ coef
+
+
+def _compute_prcc_table(samples_df: pd.DataFrame, target_col: str) -> pd.DataFrame:
+    param_cols = [col for col in samples_df.columns if col != target_col]
+    x = samples_df[param_cols].to_numpy(dtype=float)
+    y = samples_df[target_col].to_numpy(dtype=float)
+
+    x_rank = np.column_stack([rankdata(x[:, idx]) for idx in range(x.shape[1])])
+    y_rank = rankdata(y)
+
+    records: List[Dict[str, float | str]] = []
+    n = x_rank.shape[0]
+    p = x_rank.shape[1]
+
+    for idx, name in enumerate(param_cols):
+        z = np.delete(x_rank, idx, axis=1)
+        rx = _ols_residuals(x_rank[:, idx], z)
+        ry = _ols_residuals(y_rank, z)
+
+        denom = float(np.std(rx) * np.std(ry))
+        prcc = float(np.corrcoef(rx, ry)[0, 1]) if denom > 0 else np.nan
+
+        k = p - 1
+        df = max(n - k - 2, 1)
+        if np.isfinite(prcc) and abs(prcc) < 1.0:
+            t_val = abs(prcc) * np.sqrt(df / max(1e-12, 1.0 - prcc * prcc))
+            p_value = float(2.0 * (1.0 - student_t.cdf(t_val, df)))
+        elif np.isfinite(prcc):
+            p_value = 0.0
+        else:
+            p_value = np.nan
+
+        records.append(
+            {
+                "parameter": name,
+                "prcc": prcc,
+                "abs_prcc": float(abs(prcc)) if np.isfinite(prcc) else np.nan,
+                "p_value": p_value,
+            }
+        )
+
+    return pd.DataFrame(records).sort_values("abs_prcc", ascending=False)
+
+
+def global_sensitivity_analysis(
+    model: CampusLayeredSVEIQR,
+    n_samples: int = 300,
+    t_eval: float = 0.0,
+    seed: int = 42,
+    param_ranges: Mapping[str, Tuple[float, float]] | None = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    if n_samples < 20:
+        raise ValueError("n_samples must be >= 20 for stable global sensitivity")
+
+    if param_ranges is None:
+        param_ranges = {
+            "beta0": (0.65, 1.10),
+            "gamma": (0.50, 1.00),
+            "q_rate": (0.08, 0.30),
+            "q_scale": (0.8, 3.0),
+            "ve_s": (0.25, 0.60),
+            "ve_t": (0.20, 0.55),
+            "ve_l": (0.20, 0.55),
+            "v_cov_s": (0.05, 0.60),
+            "v_cov_t": (0.05, 0.60),
+            "v_cov_l": (0.05, 0.60),
+            "season_amp": (0.10, 0.35),
+            "mask_u": (0.0, 1.0),
+            "vent_u": (0.0, 1.0),
+            "online_u": (0.0, 1.0),
+            "club_u": (0.0, 1.0),
+            "disinfect_u": (0.0, 1.0),
+        }
+
+    param_names = list(param_ranges.keys())
+    rng = np.random.default_rng(seed)
+    unit = _lhs_unit(int(n_samples), len(param_names), rng)
+    low = np.array([float(param_ranges[name][0]) for name in param_names], dtype=float)
+    high = np.array([float(param_ranges[name][1]) for name in param_names], dtype=float)
+    samples = low + (high - low) * unit
+
+    rows: List[Dict[str, float]] = []
+    for idx in range(samples.shape[0]):
+        params_i = replace(model.params)
+        row: Dict[str, float] = {}
+        for j, name in enumerate(param_names):
+            value = float(samples[idx, j])
+            setattr(params_i, name, value)
+            row[name] = value
+
+        model_i = CampusLayeredSVEIQR(
+            group_sizes=model.group_sizes,
+            contact_matrices=model.contact_matrices,
+            place_weights=model.place_weights,
+            params=params_i,
+        )
+        row["R_eff"] = effective_reproduction_number(model_i, t=t_eval, state=None)
+        rows.append(row)
+
+    samples_df = pd.DataFrame(rows)
+    prcc_df = _compute_prcc_table(samples_df, target_col="R_eff")
+    return samples_df, prcc_df
+
+
+def run_global_sensitivity_demo(
+    output_dir: str | Path | None = None,
+    n_samples: int = 300,
+    season_profile: str | None = None,
+) -> Tuple[float, pd.DataFrame, pd.DataFrame]:
+    anchor = load_shanghai_seir_anchor()
+    model = build_scenario_model("baseline", season_profile=season_profile)
+    model.params.beta0 = anchor["beta"]
+    model.params.sigma = anchor["sigma"]
+    model.params.gamma = anchor["gamma"]
+
+    r_eff_t0 = effective_reproduction_number(model, t=0.0, state=None)
+    samples_df, prcc_df = global_sensitivity_analysis(
+        model=model,
+        n_samples=n_samples,
+        t_eval=0.0,
+        seed=42,
+    )
+
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame([{"R_eff_t0": r_eff_t0}]).to_csv(
+            output_dir / "layered_sveiqr_reff_summary.csv",
+            index=False,
+            encoding="utf-8-sig",
+        )
+        samples_df.to_csv(
+            output_dir / "layered_sveiqr_global_sensitivity_samples.csv",
+            index=False,
+            encoding="utf-8-sig",
+        )
+        prcc_df.to_csv(
+            output_dir / "layered_sveiqr_global_sensitivity_prcc.csv",
+            index=False,
+            encoding="utf-8-sig",
+        )
+
+    return r_eff_t0, samples_df, prcc_df
+
+
 # 冬春高发季：season_profile="winter_spring_peak"
 # 非高发季：season_profile="off_season"
 def run_demo(
@@ -1047,3 +1258,16 @@ if __name__ == "__main__":
         output_dir=out_dir,
         title_suffix="Optimized",
     )
+
+    print("\nRunning R_eff and global sensitivity analysis...")
+    r_eff_t0, _, prcc_df = run_global_sensitivity_demo(
+        output_dir=out_dir,
+        n_samples=300,
+    )
+    print(f"  R_eff_t0: {r_eff_t0:.6f}")
+    print("  Top PRCC parameters:")
+    for _, row in prcc_df.head(5).iterrows():
+        print(
+            f"    {row['parameter']}: PRCC={row['prcc']:.4f}, "
+            f"p={row['p_value']:.4g}"
+        )
