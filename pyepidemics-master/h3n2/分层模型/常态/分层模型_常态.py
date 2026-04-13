@@ -64,7 +64,7 @@ class CostWeights:
     c_c: float = 3.00
     c_d: float = 2.00
     c_vax: float = 10.00
-    c_q: float = 2.00
+    c_q: float = 5.5
     c_q2: float = 0.50
 
 

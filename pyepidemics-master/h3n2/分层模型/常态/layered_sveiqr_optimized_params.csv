@@ -1,2 +1,0 @@
-﻿beta0,sigma,gamma,q_rate,q_release,q_scale,q_sat_k,q_gain_max,q_capacity_alpha,q_rate_cap,ve_s,ve_t,ve_l,v_cov_s,v_cov_t,v_cov_l,vax_cov_scale,season_amp,season_phase,season_start_day,omega_v,omega_r,mask_u,vent_u,online_u,club_u,disinfect_u,seed_s,seed_t,seed_l,seed_e_s,seed_e_t,seed_e_l
-0.858,1.161,0.77,0.22,0.15,0.004931741276847035,1.0,3.0,10.0,1.0,0.38,0.305,0.375,0.2,0.12,0.12,0.6351104219103665,0.225,30.0,0.0,0.0,0.0,0.04625065708735521,0.00048434094064842004,0.0020386104995803733,0.006332795971232097,0.026698486954103817,2.0,0.0,0.0,2.0,0.0,0.0

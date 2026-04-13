@@ -64,7 +64,7 @@ class CostWeights:
     c_c: float = 3.00
     c_d: float = 2.00
     c_vax: float = 10.00
-    c_q: float = 2.00
+    c_q: float = 5.5
     c_q2: float = 0.50
 
 
@@ -74,7 +74,7 @@ class DisruptionWeights:
 
     d_o: float = 5.00
     d_c: float = 2.00
-    d_q_policy: float = 1.00
+    d_q_policy: float = 1.50
     d_q_load: float = 30.00
 
 
