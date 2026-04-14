@@ -53,6 +53,8 @@ class ObjectiveWeights:
 
     omega1: float = 1.20
     omega2: float = 8.00
+    lambda_AR: float = 1.00
+    lambda_P: float = 0.10
 
 
 @dataclass
@@ -62,9 +64,9 @@ class CostWeights:
     c_m: float = 1.00
     c_v: float = 0.0
     c_d: float = 2.00
-    c_vax: float = 10.00
-    c_q: float = 5.0
-    c_q2: float = 1.0
+    c_vax: float = 8.0
+    c_q: float = 5.50
+    c_q2: float = 0.50
 
 
 @dataclass
@@ -542,15 +544,27 @@ def _build_objective_components(
     i_ratio = trajectory["I"].to_numpy(dtype=float) / n0
     q_ratio = trajectory["Q"].to_numpy(dtype=float) / n0
 
-    # A: 指数形式 (exp-1保证e=i=q=0时为0)
+    # A: 指数形式 (移除Q项) + 累计感染率 + 峰值项
     epidemic_exp = objective_weights.omega1 * (
-        np.exp(objective_weights.omega2 * (e_ratio + i_ratio + q_ratio)) - 1.0
+        np.exp(objective_weights.omega2 * (e_ratio + i_ratio)) - 1.0
     )
-    a = float(np.trapezoid(epidemic_exp, t))
+    a_integral = float(np.trapezoid(epidemic_exp, t)) / max(horizon, 1e-12)
 
-    # C: 一次项（线性）控制成本
+    # 累计感染率项
+    final_r = float(trajectory["R"].iloc[-1])
+    attack_rate = final_r / max(n0, 1e-12)
+    a_ar = objective_weights.lambda_AR * attack_rate
+
+    # 峰值感染人数项
+    peak_i = float(trajectory["I"].max())
+    peak_i_norm = peak_i / max(n0, 1e-12)
+    a_p = objective_weights.lambda_P * peak_i_norm
+
+    a = a_integral + a_ar + a_p
+
+    # C: 一次项（线性）控制成本（时间平均）
     q_excess = max(0.0, controls["q_scale"] - 1.0)
-    c = horizon * (
+    c = (
         cost_weights.c_m * controls["mask_u"]
         + cost_weights.c_v * controls["vent_u"]
         + cost_weights.c_d * controls["disinfect_u"]
@@ -559,13 +573,17 @@ def _build_objective_components(
         + cost_weights.c_q2 * q_excess * q_excess
     )
 
-    # D: 策略扰动 + 隔离负荷扰动
-    d_policy = horizon * (
+    # D: 策略扰动 + 隔离负荷扰动（时间平均）
+    d_policy = (
         disruption_weights.d_o * controls["online_u"]
         + disruption_weights.d_c * controls["club_u"]
         + disruption_weights.d_q_policy * controls["q_scale"]
     )
-    d_load = disruption_weights.d_q_load * float(np.trapezoid(q_ratio, t))
+    d_load = (
+        disruption_weights.d_q_load
+        * float(np.trapezoid(q_ratio, t))
+        / max(horizon, 1e-12)
+    )
     d = d_policy + d_load
 
     j = a + c + d
@@ -627,10 +645,10 @@ def optimize_interventions(
     cost_weights: CostWeights | None = None,
     disruption_weights: DisruptionWeights | None = None,
     base_params: CampusLayeredParams | None = None,
-    maxiter: int = 500,
-    global_maxiter: int = 500,
-    global_popsize: int = 10,
-    global_tol: float = 1e-2,
+    maxiter: int = 1000,
+    global_maxiter: int = 1000,
+    global_popsize: int = 15,
+    global_tol: float = 1e-3,
 ) -> Tuple[CampusLayeredSVEIQR, pd.DataFrame, Dict[str, float], pd.DataFrame]:
     """优化七类防控强度，返回最优模型、轨迹、指标和搜索日志。
 
