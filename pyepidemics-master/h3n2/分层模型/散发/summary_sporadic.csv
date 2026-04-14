@@ -1,0 +1,2 @@
+﻿A,C,D,J,peak_I_norm,peak_I_day,peak_I,final_R,final_Q,attack_rate,mask_u,vent_u,online_u,club_u,disinfect_u,vax_cov_scale,q_scale,global_success,global_nit,global_fun,optimizer_success,optimizer_nit,optimizer_fun
+333.89095252946595,91.0,51.147755586281605,476.03870811574757,0.25585140743097534,26.0,7291.765111782797,27053.368812161156,1.0303968639609447,0.949241010953023,1.0,1.0,0.0,0.0,0.0,0.9999999919494872,0.0,1.0,47.0,489.4842740279983,0.0,12.0,476.0387081157495

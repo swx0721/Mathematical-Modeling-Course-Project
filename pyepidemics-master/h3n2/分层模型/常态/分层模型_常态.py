@@ -60,13 +60,11 @@ class CostWeights:
     """防控成本权重。"""
 
     c_m: float = 1.00
-    c_v: float = 1.50
-    c_o: float = 8.00
-    c_c: float = 3.00
+    c_v: float = 0.0
     c_d: float = 2.00
     c_vax: float = 10.00
-    c_q: float = 5.5
-    c_q2: float = 0.50
+    c_q: float = 5.0
+    c_q2: float = 1.0
 
 
 @dataclass
@@ -113,9 +111,9 @@ class _TerminalEvent:
 class CampusLayeredParams:
     """模型参数。"""
 
-    beta0: float = 0.858
-    sigma: float = 1.161
-    gamma: float = 0.770
+    beta0: float = 0.256
+    sigma: float = 0.53
+    gamma: float = 0.2
 
     q_rate: float = 0.22
     q_release: float = 0.15
@@ -217,13 +215,13 @@ class CampusLayeredSVEIQR:
         beta = self.seasonal_beta(t)
 
         if place == "class":
+            beta *= 1.0 - params.mask_effect * params.mask_u
             beta *= 1.0 - params.vent_effect * params.vent_u
             beta *= 1.0 - params.disinfect_effect * params.disinfect_u
             beta *= 1.0 - params.online_effect * params.online_u
         elif place == "dorm":
-            beta *= 1.0 - params.mask_effect * params.mask_u
+            beta *= 1.0 - params.vent_effect * params.vent_u
         elif place == "canteen":
-            beta *= 1.0 - params.mask_effect * params.mask_u
             beta *= 1.0 - params.disinfect_effect * params.disinfect_u
         elif place == "club":
             beta *= 1.0 - params.mask_effect * params.mask_u
@@ -446,22 +444,22 @@ def default_contact_matrices() -> Dict[str, List[List[float]]]:
     scales = {"dorm": 1.00, "class": 1.00, "canteen": 1.00, "club": 1.00}
     return {
         "dorm": [
-            [8.5 * scales["dorm"], 0.3 * scales["dorm"], 0.2 * scales["dorm"]],
+            [5.5 * scales["dorm"], 0.3 * scales["dorm"], 0.2 * scales["dorm"]],
             [0.2 * scales["dorm"], 0.1 * scales["dorm"], 0.05 * scales["dorm"]],
             [0.3 * scales["dorm"], 0.05 * scales["dorm"], 0.4 * scales["dorm"]],
         ],
         "class": [
-            [12.0 * scales["class"], 2.5 * scales["class"], 0.3 * scales["class"]],
-            [3.0 * scales["class"], 1.2 * scales["class"], 0.2 * scales["class"]],
+            [6.5 * scales["class"], 2.0 * scales["class"], 0.3 * scales["class"]],
+            [2.5 * scales["class"], 1.2 * scales["class"], 0.2 * scales["class"]],
             [0.4 * scales["class"], 0.2 * scales["class"], 0.3 * scales["class"]],
         ],
         "canteen": [
-            [4.5 * scales["canteen"], 0.8 * scales["canteen"], 0.5 * scales["canteen"]],
+            [2.8 * scales["canteen"], 0.8 * scales["canteen"], 0.5 * scales["canteen"]],
             [0.7 * scales["canteen"], 0.6 * scales["canteen"], 0.3 * scales["canteen"]],
             [0.6 * scales["canteen"], 0.3 * scales["canteen"], 0.8 * scales["canteen"]],
         ],
         "club": [
-            [6.0 * scales["club"], 0.5 * scales["club"], 0.2 * scales["club"]],
+            [2.0 * scales["club"], 0.5 * scales["club"], 0.2 * scales["club"]],
             [0.4 * scales["club"], 0.3 * scales["club"], 0.1 * scales["club"]],
             [0.2 * scales["club"], 0.1 * scales["club"], 0.2 * scales["club"]],
         ],
@@ -525,17 +523,6 @@ def build_scenario_model(
     )
 
 
-def load_shanghai_seir_anchor(csv_path: str | Path | None = None) -> Dict[str, float]:
-    """读取上海数据文件，并返回可作为校园模型锚定的基准参数。
-
-    当前实现直接返回论文里已经约定的中心值；若需要后续接入更完整的拟合结果，
-    可在此函数中扩展为从参数日志中读取 beta, sigma, gamma。
-    """
-
-    _ = csv_path
-    return {"beta": 0.858, "sigma": 1.161, "gamma": 0.770}
-
-
 def _clip_control(name: str, x: float) -> float:
     low, high = CONTROL_BOUNDS[name]
     return float(np.clip(float(x), low, high))
@@ -567,8 +554,6 @@ def _build_objective_components(
     c = horizon * (
         cost_weights.c_m * controls["mask_u"]
         + cost_weights.c_v * controls["vent_u"]
-        + cost_weights.c_o * controls["online_u"]
-        + cost_weights.c_c * controls["club_u"]
         + cost_weights.c_d * controls["disinfect_u"]
         + cost_weights.c_vax * max(0.0, controls["vax_cov_scale"] - 1.0)
         + cost_weights.c_q * q_excess
@@ -643,8 +628,8 @@ def optimize_interventions(
     cost_weights: CostWeights | None = None,
     disruption_weights: DisruptionWeights | None = None,
     base_params: CampusLayeredParams | None = None,
-    maxiter: int = 100,
-    global_maxiter: int = 100,
+    maxiter: int = 500,
+    global_maxiter: int = 500,
     global_popsize: int = 10,
     global_tol: float = 1e-2,
 ) -> Tuple[CampusLayeredSVEIQR, pd.DataFrame, Dict[str, float], pd.DataFrame]:
@@ -767,14 +752,12 @@ def optimize_interventions(
 def run_optimization_demo(
     output_dir: str | Path | None = None,
     n_days: int | None = None,
+    scenario: str = "normal",
 ) -> Tuple[CampusLayeredSVEIQR, pd.DataFrame, Dict[str, float]]:
     """执行一次优化示例并可选保存结果。"""
+    np.random.seed(42)  # Fix random seed for reproducibility
 
-    anchor = load_shanghai_seir_anchor()
     base_params = CampusLayeredParams()
-    base_params.beta0 = anchor["beta"]
-    base_params.sigma = anchor["sigma"]
-    base_params.gamma = anchor["gamma"]
 
     model, trajectory, summary, history = optimize_interventions(
         n_days=n_days,
@@ -783,24 +766,14 @@ def run_optimization_demo(
 
     if output_dir is not None:
         output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        save_trajectory(
-            trajectory, output_dir / "layered_sveiqr_optimized_trajectory.csv"
-        )
-        pd.DataFrame([asdict(model.params)]).to_csv(
-            output_dir / "layered_sveiqr_optimized_params.csv",
-            index=False,
-            encoding="utf-8-sig",
-        )
-        pd.DataFrame([summary]).to_csv(
-            output_dir / "layered_sveiqr_optimization_summary.csv",
-            index=False,
-            encoding="utf-8-sig",
-        )
-        history.to_csv(
-            output_dir / "layered_sveiqr_optimization_history.csv",
-            index=False,
-            encoding="utf-8-sig",
+        # Save paper-grade outputs with scenario identifier
+        save_paper_grade_outputs(
+            model=model,
+            trajectory=trajectory,
+            scenario=scenario,
+            output_root=output_dir,
+            summary=summary,
+            history=history,
         )
 
     return model, trajectory, summary
@@ -810,6 +783,181 @@ def save_trajectory(trajectory: pd.DataFrame, output_path: str | Path) -> None:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     trajectory.to_csv(output_path, encoding="utf-8-sig")
+
+
+def save_paper_grade_outputs(
+    model: CampusLayeredSVEIQR,
+    trajectory: pd.DataFrame,
+    scenario: str = "cluster",
+    output_root: str | Path | None = None,
+    summary: Dict[str, float] | None = None,
+    history: pd.DataFrame | None = None,
+) -> Path:
+    """保存论文级多层级输出。
+
+    Parameters:
+    -----------
+    model : CampusLayeredSVEIQR
+        已优化/模拟的模型实例
+    trajectory : pd.DataFrame
+        时间序列数据
+    scenario : str
+        场景标识 ("normal", "sporadic", "cluster")
+    output_root : Path or str
+        输出根目录
+    summary : dict, optional
+        目标函数分解与指标摘要
+    history : pd.DataFrame, optional
+        优化收敛历史
+
+    Returns:
+    --------
+    Path
+        已创建的输出根目录
+    """
+    import json
+
+    if output_root is None:
+        output_root = Path.cwd()
+    else:
+        output_root = Path(output_root)
+
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    # Layer 1: Full timeseries with all compartments
+    ts_path = output_root / f"timeseries_{scenario}.csv"
+    trajectory.to_csv(ts_path, encoding="utf-8-sig")
+
+    # Layer 2: Place-wise contribution of daily new infections
+    inc_df = build_incidence_breakdown(model, trajectory)
+    pc_path = output_root / f"place_contribution_{scenario}.csv"
+    inc_df.to_csv(pc_path, encoding="utf-8-sig")
+
+    # Layer 3: Optimization result (objective, costs, controls)
+    if summary is not None:
+        opt_result = {
+            "scenario": scenario,
+            "objective_J": float(summary.get("J", np.nan)),
+            "epidemic_loss_A": float(summary.get("A", np.nan)),
+            "control_cost_C": float(summary.get("C", np.nan)),
+            "disruption_D": float(summary.get("D", np.nan)),
+            "attack_rate": float(summary.get("attack_rate", np.nan)),
+            "peak_I": float(summary.get("peak_I", np.nan)),
+            "peak_I_day": float(summary.get("peak_I_day", np.nan)),
+            "controls": {
+                "mask_u": float(summary.get("mask_u", model.params.mask_u)),
+                "vent_u": float(summary.get("vent_u", model.params.vent_u)),
+                "online_u": float(summary.get("online_u", model.params.online_u)),
+                "club_u": float(summary.get("club_u", model.params.club_u)),
+                "disinfect_u": float(
+                    summary.get("disinfect_u", model.params.disinfect_u)
+                ),
+                "vax_cov_scale": float(
+                    summary.get("vax_cov_scale", model.params.vax_cov_scale)
+                ),
+                "q_scale": float(summary.get("q_scale", model.params.q_scale)),
+            },
+        }
+        opt_path = output_root / f"opt_result_{scenario}.json"
+        with open(opt_path, "w", encoding="utf-8-sig") as f:
+            json.dump(opt_result, f, indent=2, ensure_ascii=False)
+
+    # Layer 4: Optimization history (convergence curve)
+    if history is not None:
+        hist_path = output_root / f"opt_history_{scenario}.csv"
+        history.to_csv(hist_path, index=False, encoding="utf-8-sig")
+
+    # Layer 5: Summary statistics
+    if summary is not None:
+        summary_df = pd.DataFrame([summary])
+        summ_path = output_root / f"summary_{scenario}.csv"
+        summary_df.to_csv(summ_path, index=False, encoding="utf-8-sig")
+
+    # Layer 6: Model configuration (for reproducibility)
+    config = {
+        "scenario": scenario,
+        "model_type": "LayeredSVEIQR",
+        "populations": {
+            "students": float(model.group_sizes["s"]),
+            "teachers": float(model.group_sizes["t"]),
+            "staff": float(model.group_sizes["l"]),
+        },
+        "parameters": {
+            "beta0": float(model.params.beta0),
+            "sigma": float(model.params.sigma),
+            "gamma": float(model.params.gamma),
+            "q_rate": float(model.params.q_rate),
+            "season_start_day": float(model.params.season_start_day),
+            "season_amp": float(model.params.season_amp),
+            "season_phase": float(model.params.season_phase),
+            "seed_s": float(model.params.seed_s),
+            "seed_t": float(model.params.seed_t),
+            "seed_l": float(model.params.seed_l),
+        },
+        "vaccine_coverage": {
+            "students": float(model.params.v_cov_s),
+            "teachers": float(model.params.v_cov_t),
+            "staff": float(model.params.v_cov_l),
+        },
+        "place_weights": {k: float(v) for k, v in model.place_weights.items()},
+    }
+    cfg_path = output_root / f"config_{scenario}.json"
+    with open(cfg_path, "w", encoding="utf-8-sig") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+
+    # Layer 7: Baseline vs Optimized comparison (saved if history provided)
+    if history is not None and len(history) > 0:
+        compare_data = {
+            "scenario": scenario,
+            "initial_J": (
+                float(history["J"].iloc[0]) if "J" in history.columns else np.nan
+            ),
+            "final_J": (
+                float(history["J"].iloc[-1]) if "J" in history.columns else np.nan
+            ),
+            "improvements": {
+                "A": (
+                    float(history["A"].iloc[0] - history["A"].iloc[-1])
+                    if "A" in history.columns
+                    else np.nan
+                ),
+                "C": (
+                    float(history["C"].iloc[0] - history["C"].iloc[-1])
+                    if "C" in history.columns
+                    else np.nan
+                ),
+                "D": (
+                    float(history["D"].iloc[0] - history["D"].iloc[-1])
+                    if "D" in history.columns
+                    else np.nan
+                ),
+            },
+        }
+        history.to_csv(
+            output_root / f"compare_{scenario}.csv", index=False, encoding="utf-8-sig"
+        )
+
+    # Layer 8: Sensitivity analysis results (if computed)
+    # This will be saved separately when running sensitivity analysis
+
+    # Layer 9: R0 and Re results (compute here if needed)
+    t_eval = trajectory.index.to_numpy(dtype=float)
+    r0 = effective_reproduction_number(model, t=t_eval[0], state=model.initial_state())
+
+    reff_records = []
+    for t_day in t_eval[:: max(1, len(t_eval) // 100)]:  # Sample ~ 100 points
+        y_t = trajectory.loc[t_day].to_dict() if t_day in trajectory.index else {}
+        state_t = {
+            k: float(v) if not np.isnan(float(v)) else 0.0 for k, v in y_t.items()
+        }
+        r_eff = effective_reproduction_number(model, t=float(t_day), state=state_t)
+        reff_records.append({"day": float(t_day), "R0": r0, "R_eff": r_eff})
+
+    reff_df = pd.DataFrame(reff_records)
+    re_path = output_root / f"reff_{scenario}.csv"
+    reff_df.to_csv(re_path, index=False, encoding="utf-8-sig")
+
+    return output_root
 
 
 def _effective_q_rate(params: CampusLayeredParams, i_ratio: float) -> float:
@@ -933,8 +1081,8 @@ def global_sensitivity_analysis(
 
     if param_ranges is None:
         param_ranges = {
-            "beta0": (0.65, 1.10),
-            "gamma": (0.50, 1.00),
+            "beta0": (0.13, 0.38),
+            "gamma": (0.10, 0.30),
             "q_rate": (0.08, 0.30),
             "q_scale": (0.8, 3.0),
             "ve_s": (0.25, 0.60),
@@ -986,11 +1134,7 @@ def run_global_sensitivity_demo(
     n_samples: int = 300,
     season_profile: str | None = None,
 ) -> Tuple[float, pd.DataFrame, pd.DataFrame]:
-    anchor = load_shanghai_seir_anchor()
     model = build_scenario_model("baseline", season_profile=season_profile)
-    model.params.beta0 = anchor["beta"]
-    model.params.sigma = anchor["sigma"]
-    model.params.gamma = anchor["gamma"]
 
     r_eff_t0 = effective_reproduction_number(model, t=0.0, state=None)
     samples_df, prcc_df = global_sensitivity_analysis(
@@ -1028,21 +1172,23 @@ def run_demo(
     output_dir: str | Path | None = None,
     n_days: int | None = None,
     season_profile: str | None = None,
+    scenario: str = "normal",
 ) -> Tuple[CampusLayeredSVEIQR, pd.DataFrame, Dict[str, float]]:
-    anchor = load_shanghai_seir_anchor()
+    np.random.seed(42)  # Fix random seed for reproducibility
     model = build_baseline_model(season_profile=season_profile)
-    model.params.beta0 = anchor["beta"]
-    model.params.sigma = anchor["sigma"]
-    model.params.gamma = anchor["gamma"]
 
     trajectory = model.solve(n_days=n_days)
     summary = model.summary(trajectory)
 
     if output_dir is not None:
         output_dir = Path(output_dir)
-        save_trajectory(trajectory, output_dir / "layered_sveiqr_trajectory.csv")
-        pd.DataFrame([asdict(model.params)]).to_csv(
-            output_dir / "layered_sveiqr_params.csv", index=False, encoding="utf-8-sig"
+        # Save paper-grade outputs
+        save_paper_grade_outputs(
+            model=model,
+            trajectory=trajectory,
+            scenario=scenario,
+            output_root=output_dir,
+            summary=summary,
         )
 
     return model, trajectory, summary
@@ -1218,12 +1364,51 @@ def plot_scenario_comparison(output_dir: str | Path | None = None) -> pd.DataFra
 
 
 if __name__ == "__main__":
-    out_dir = Path(__file__).resolve().parent
+    import sys
 
-    print("Running intervention optimization...")
+    # Fix global random seed for reproducibility
+    np.random.seed(42)
+
+    out_dir = Path(__file__).resolve().parent
+    scenario = "normal"  # This script is for normal scenario
+
+    # Parse command-line arguments for quick shortcuts
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1].lower()
+        if cmd == "demo":
+            print(f"Running baseline demo ({scenario} scenario)...")
+            model, traj, summ = run_demo(
+                output_dir=out_dir,
+                n_days=None,
+                scenario=scenario,
+            )
+            print(f"  Attack rate: {summ.get('attack_rate', np.nan):.4f}")
+            print(f"  Peak I: {summ.get('peak_I', np.nan):.1f}")
+            sys.exit(0)
+        elif cmd == "optim":
+            print(f"Running optimization ({scenario} scenario)...")
+            model, traj, summ = run_optimization_demo(
+                output_dir=out_dir,
+                n_days=None,
+                scenario=scenario,
+            )
+            print(f"  Objective J: {summ.get('J', np.nan):.6f}")
+            print(f"  Attack rate: {summ.get('attack_rate', np.nan):.4f}")
+            sys.exit(0)
+        elif cmd == "sensitivity":
+            print(f"Running sensitivity analysis ({scenario} scenario)...")
+            run_global_sensitivity_demo(
+                output_dir=out_dir,
+                n_samples=300,
+            )
+            sys.exit(0)
+
+    # Default: Run full pipeline
+    print(f"[{scenario.upper()}] Running intervention optimization...")
     opt_model, opt_trajectory, opt_summary = run_optimization_demo(
         output_dir=out_dir,
         n_days=None,
+        scenario=scenario,
     )
 
     print("\n===== Optimization Summary =====")
@@ -1271,3 +1456,5 @@ if __name__ == "__main__":
             f"    {row['parameter']}: PRCC={row['prcc']:.4f}, "
             f"p={row['p_value']:.4g}"
         )
+
+    print(f"\n✅ Paper-grade outputs saved to: {out_dir}")
