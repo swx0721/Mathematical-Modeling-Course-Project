@@ -62,8 +62,10 @@ class CostWeights:
     """防控成本权重。"""
 
     c_m: float = 1.00
-    c_v: float = 0.0
+    c_v: float = 0.5
     c_d: float = 2.00
+    c_o: float = 1.50
+    c_cl: float = 0.80
     c_vax: float = 8.0
     c_q: float = 5.50
     c_q2: float = 0.50
@@ -73,8 +75,8 @@ class CostWeights:
 class DisruptionWeights:
     """教学秩序损失权重。"""
 
-    d_o: float = 5.00
-    d_c: float = 2.00
+    d_o: float = 1.50
+    d_c: float = 0.80
     d_q_policy: float = 2.00
     d_q_load: float = 30.00
 
@@ -568,6 +570,8 @@ def _build_objective_components(
         cost_weights.c_m * controls["mask_u"]
         + cost_weights.c_v * controls["vent_u"]
         + cost_weights.c_d * controls["disinfect_u"]
+        + cost_weights.c_o * controls["online_u"]
+        + cost_weights.c_cl * controls["club_u"]
         + cost_weights.c_vax * max(0.0, controls["vax_cov_scale"] - 1.0)
         + cost_weights.c_q * q_excess
         + cost_weights.c_q2 * q_excess * q_excess
