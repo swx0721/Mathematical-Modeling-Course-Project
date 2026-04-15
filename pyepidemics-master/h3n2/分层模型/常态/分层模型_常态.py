@@ -52,8 +52,8 @@ class ObjectiveWeights:
     """目标函数中的疫情损失权重。"""
 
     omega1: float = 1.00
-    omega2: float = 7.00  # 激进：从8.00降低至7.00，保持保守但增强感染率渠道
-    lambda_AR: float = 6.00  # 激进：从3.00提高至6.00，最大化感染率优化
+    omega2: float = 8.00  # 场景自適应：常态保守方案
+    lambda_AR: float = 3.00  # 场景自適应：常态保守，不过度防控
     lambda_P: float = 0.10
 
 
@@ -66,8 +66,8 @@ class CostWeights:
     c_d: float = 2.00
     c_o: float = 1.50
     c_vax: float = 8.0
-    c_q: float = 2.50  # 激进：从3.50降低至2.50，推动隔离优化（常态激进方案）
-    c_q2: float = 0.15  # 激进：从0.35降低至0.15，大幅减弱二次成本约束
+    c_q: float = 3.50  # 场景自適应：常态保守，不肦膾隔离
+    c_q2: float = 0.35  # 场景自適应：常态保守
 
 
 @dataclass
@@ -77,7 +77,7 @@ class DisruptionWeights:
     d_o: float = 1.50
     d_c: float = 0.80
     d_q_policy: float = 1.00
-    d_q_load: float = 18.00  # 激进：从25.00降低至18.00，推动隔离政策（常态激进方案）
+    d_q_load: float = 25.00  # 场景自適应：常态保守，维持理性隶值
 
 
 SEASON_START_DAY = {
