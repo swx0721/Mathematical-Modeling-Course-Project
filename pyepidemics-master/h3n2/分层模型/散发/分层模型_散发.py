@@ -64,7 +64,7 @@ class CostWeights:
     c_m: float = 1.00
     c_v: float = 0
     c_d: float = 2.00
-    c_o: float = 1.50
+    c_o: float = 2.50
     c_vax: float = 8.0
     c_q: float = 2.50  # 场景自適应：散发激进，涉需积極隔离
     c_q2: float = 0.15  # 场景自適应：散发激进
@@ -74,7 +74,7 @@ class CostWeights:
 class DisruptionWeights:
     """教学秩序损失权重。"""
 
-    d_o: float = 1.50
+    d_o: float = 4.00
     d_c: float = 0.80
     d_q_policy: float = 1.50
     d_q_load: float = 18.00  # 场景自適应：散发激进，潮前消需
@@ -141,7 +141,7 @@ class CampusLayeredParams:
     omega_v: float = 0.0
     omega_r: float = 0.0
 
-    mask_effect = 0.40
+    mask_effect = 0.50
     vent_effect = 0.3
     online_effect = 0.715
     club_limit_effect = 0.4
@@ -221,7 +221,6 @@ class CampusLayeredSVEIQR:
             beta *= 1.0 - params.mask_effect * params.mask_u
             beta *= 1.0 - params.vent_effect * params.vent_u
             beta *= 1.0 - params.disinfect_effect * params.disinfect_u
-            beta *= 1.0 - params.online_effect * params.online_u
         elif place == "dorm":
             beta *= 1.0 - params.vent_effect * params.vent_u
         elif place == "canteen":
