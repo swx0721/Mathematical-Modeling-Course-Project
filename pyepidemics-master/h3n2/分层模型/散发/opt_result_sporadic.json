@@ -1,19 +1,19 @@
 ﻿{
   "scenario": "sporadic",
-  "objective_J": 4.510027777967567,
-  "epidemic_loss_A": 0.28640266147661186,
-  "control_cost_C": 3.0,
-  "disruption_D": 1.2236251164909548,
-  "attack_rate": 0.046114070682154416,
-  "peak_I": 24.392902400975967,
-  "peak_I_day": 81.0,
+  "objective_J": 3.583211796327036,
+  "epidemic_loss_A": 0.4397772486043913,
+  "control_cost_C": 1.619359672229332,
+  "disruption_D": 1.5240748754933127,
+  "attack_rate": 0.05345505627983952,
+  "peak_I": 27.783934101254665,
+  "peak_I_day": 82.0,
   "controls": {
     "mask_u": 1.0,
     "vent_u": 1.0,
     "online_u": 0.0,
     "club_u": 0.0,
-    "disinfect_u": 1.0,
-    "vax_cov_scale": 0.9999999935699412,
-    "q_scale": 0.8020468499004635
+    "disinfect_u": 0.30967983611466593,
+    "vax_cov_scale": 0.9999999926778446,
+    "q_scale": 0.999998013982398
   }
 }

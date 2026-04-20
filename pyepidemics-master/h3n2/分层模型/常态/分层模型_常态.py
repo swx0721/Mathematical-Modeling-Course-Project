@@ -5,8 +5,6 @@
 - 人群：学生、教师、后勤
 - 仓室：S, V, E, I, Q, R
 - 场所：宿舍、教学区、食堂、社团
-
-当前版本只完成模型建立与情景模拟，不包含参数优化。
 """
 
 from __future__ import annotations
@@ -52,8 +50,8 @@ class ObjectiveWeights:
     """目标函数中的疫情损失权重。"""
 
     omega1: float = 1.00
-    omega2: float = 8.00  # 场景自適应：常态保守方案
-    lambda_AR: float = 3.00  # 场景自適应：常态保守，不过度防控
+    omega2: float = 8.00
+    lambda_AR: float = 4.00
     lambda_P: float = 0.10
 
 
@@ -64,20 +62,20 @@ class CostWeights:
     c_m: float = 1.00
     c_v: float = 0.0
     c_d: float = 2.00
-    c_o: float = 2.50
+    c_o: float = 2.00
     c_vax: float = 8.0
-    c_q: float = 3.50  # 场景自適应：常态保守，不肦膾隔离
-    c_q2: float = 0.35  # 场景自適应：常态保守
+    c_q: float = 3.50
+    c_q2: float = 0.35
 
 
 @dataclass
 class DisruptionWeights:
     """教学秩序损失权重。"""
 
-    d_o: float = 3.00
+    d_o: float = 1.80
     d_c: float = 0.80
     d_q_policy: float = 1.00
-    d_q_load: float = 25.00  # 场景自適应：常态保守，维持理性隶值
+    d_q_load: float = 25.00
 
 
 SEASON_START_DAY = {
@@ -142,10 +140,10 @@ class CampusLayeredParams:
     omega_r: float = 0.0
 
     mask_effect = 0.50
-    vent_effect = 0.3
-    online_effect = 0.715
+    vent_effect = 0.45
+    online_effect = 0.95
     club_limit_effect = 0.4
-    disinfect_effect = 0.60
+    disinfect_effect = 0.40
     mask_u: float = 0.0
     vent_u: float = 0.0
     online_u: float = 0.0
@@ -227,7 +225,6 @@ class CampusLayeredSVEIQR:
             beta *= 1.0 - params.disinfect_effect * params.disinfect_u
         elif place == "club":
             beta *= 1.0 - params.mask_effect * params.mask_u
-            beta *= 1.0 - params.club_limit_effect * params.club_u
 
         return max(beta, 0.0)
 
@@ -812,28 +809,8 @@ def save_paper_grade_outputs(
     summary: Dict[str, float] | None = None,
     history: pd.DataFrame | None = None,
 ) -> Path:
-    """保存论文级多层级输出。
+    """保存多层级输出。"""
 
-    Parameters:
-    -----------
-    model : CampusLayeredSVEIQR
-        已优化/模拟的模型实例
-    trajectory : pd.DataFrame
-        时间序列数据
-    scenario : str
-        场景标识 ("normal", "sporadic", "cluster")
-    output_root : Path or str
-        输出根目录
-    summary : dict, optional
-        目标函数分解与指标摘要
-    history : pd.DataFrame, optional
-        优化收敛历史
-
-    Returns:
-    --------
-    Path
-        已创建的输出根目录
-    """
     import json
 
     if output_root is None:
